@@ -202,6 +202,7 @@ function remoteErrorMessage(error) {
   const message = error?.message || "Synchronisierung fehlgeschlagen";
   if (message.includes("Guthaben")) return "Guthaben reicht nicht aus";
   if (message.includes("Lagerbestand")) return "Lagerbestand reicht nicht aus";
+  if (message.includes("row-level security") && message.includes("org_beverages")) return "Die Supabase-RLS-Korrektur muss einmal im SQL Editor ausgeführt werden.";
   return message;
 }
 

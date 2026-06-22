@@ -87,7 +87,7 @@ returns boolean language sql stable security definer set search_path=public
 as $$ select exists(select 1 from memberships where organization_id=p_org and user_id=auth.uid() and role='admin') $$;
 
 create or replace function public.create_workspace(p_name text)
-returns uuid language plpgsql security definer set search_path=public
+returns uuid language plpgsql security definer set search_path=public set row_security=off
 as $$ declare v_org uuid; v_group uuid; begin
   if auth.uid() is null then raise exception 'Nicht angemeldet'; end if;
   if trim(p_name)='' then raise exception 'Name fehlt'; end if;
