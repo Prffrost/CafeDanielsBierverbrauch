@@ -31,6 +31,7 @@ let organizations = [];
 let activeOrganizationId = localStorage.getItem("cafe-daniels-active-org") || "";
 let organizationGroups = [];
 let organizationMembers = [];
+let remoteStatusMessage = "";
 
 dateInput.value = localDateString(new Date());
 
@@ -278,16 +279,26 @@ async function loadOrganizations() {
     organizations = result.data;
   }
   if (!organizations.length) {
+    try {
+      const cachedOrganization = JSON.parse(localStorage.getItem("cafe-daniels-created-org") || "null");
+      if (cachedOrganization?.id && cachedOrganization.userId === currentUser.id) organizations = [{ organization_id: cachedOrganization.id, group_id: null, role: "admin", organizations: cachedOrganization }];
+    } catch { localStorage.removeItem("cafe-daniels-created-org"); }
+  }
+  if (!organizations.length) {
     const workspaceName = localStorage.getItem("cafe-daniels-new-workspace") || `${settings.profileName || "Mein"} Bereich`;
     const created = await supabaseClient.rpc("create_workspace", { p_name: workspaceName });
     if (created.error) throw created.error;
+    activeOrganizationId = created.data;
+    localStorage.setItem("cafe-daniels-created-org", JSON.stringify({ id: created.data, name: workspaceName, userId: currentUser.id }));
     const reload = await supabaseClient.from("memberships").select("organization_id,group_id,role,organizations(id,name)").eq("user_id", currentUser.id);
     if (reload.error) throw reload.error;
     organizations = reload.data;
+    if (!organizations.length) organizations = [{ organization_id: created.data, group_id: null, role: "admin", organizations: { id: created.data, name: workspaceName } }];
   }
   if (!organizations.length) throw new Error("Noch kein Bereich vorhanden. Bitte unter Einstellungen einen Bereich erstellen.");
   if (!organizations.some((item) => item.organization_id === activeOrganizationId)) activeOrganizationId = organizations[0].organization_id;
   localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
+  remoteStatusMessage = "";
 }
 
 async function initializeRemote() {
@@ -297,12 +308,12 @@ async function initializeRemote() {
   document.querySelector("#auth-screen").hidden = Boolean(currentUser);
   if (currentUser) {
     try { await loadOrganizations(); await loadRemoteState(); await syncPendingConsumptions(); }
-    catch (error) { showToast(remoteErrorMessage(error)); render(); }
+    catch (error) { remoteStatusMessage = remoteErrorMessage(error); showToast(remoteStatusMessage); render(); }
   }
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     currentUser = session?.user || null;
     document.querySelector("#auth-screen").hidden = Boolean(currentUser);
-    if (currentUser) { try { await loadOrganizations(); await loadRemoteState(); await syncPendingConsumptions(); } catch (error) { showToast(remoteErrorMessage(error)); } }
+    if (currentUser) { try { await loadOrganizations(); await loadRemoteState(); await syncPendingConsumptions(); } catch (error) { remoteStatusMessage = remoteErrorMessage(error); showToast(remoteStatusMessage); render(); } }
   });
 }
 
@@ -314,7 +325,7 @@ function renderStatus() {
   document.querySelector("#quick-stock").textContent = `${stock} Fl.`;
   document.querySelector("#settings-stock").textContent = stock;
   document.querySelector("#account-email").textContent = currentUser?.email || "Lokaler Modus";
-  document.querySelector("#account-role").textContent = currentUser ? (!organizations.length ? "Noch kein Bereich eingerichtet" : (isAdmin ? "Administrator · synchronisiert" : "Benutzer · synchronisiert")) : "Keine Serververbindung";
+  document.querySelector("#account-role").textContent = currentUser ? (remoteStatusMessage || (!organizations.length ? "Noch kein Bereich eingerichtet" : (isAdmin ? "Administrator · synchronisiert" : "Benutzer · synchronisiert"))) : "Keine Serververbindung";
   document.querySelector("#sync-dot").classList.toggle("online", Boolean(currentUser && navigator.onLine));
   document.querySelector("#logout-button").hidden = !currentUser;
   document.querySelectorAll("[data-admin-only]").forEach((element) => { element.hidden = REMOTE_ENABLED && !isAdmin; });
@@ -460,7 +471,8 @@ document.querySelector("#deposit-form").addEventListener("submit", async (event)
     if (!activeOrganizationId) return showToast("Bitte zuerst einen aktiven Bereich erstellen");
     if (!navigator.onLine) return showToast("Einzahlung benötigt eine Verbindung");
     const result = await supabaseClient.from("org_deposits").insert({ client_id: crypto.randomUUID(), organization_id: activeOrganizationId, user_id: currentUser.id, amount: Math.round(amount * 100) / 100 });
-    if (result.error) return showToast(remoteErrorMessage(result.error));
+    if (result.error) { remoteStatusMessage = remoteErrorMessage(result.error); renderStatus(); return showToast(remoteStatusMessage); }
+    remoteStatusMessage = "";
     event.target.reset(); await loadRemoteState(); return showToast("Guthaben eingezahlt");
   }
   settings.deposits += Math.round(amount * 100) / 100; persistSettings(); event.target.reset(); render(); showToast("Guthaben eingezahlt");
@@ -564,12 +576,15 @@ document.querySelector("#workspace-form").addEventListener("submit", async (even
   const name = document.querySelector("#workspace-name").value.trim();
   if (!name) return showToast("Bitte einen Bereichsnamen eingeben");
   const created = await supabaseClient.rpc("create_workspace", { p_name: name });
-  if (created.error) return showToast(remoteErrorMessage(created.error));
+  if (created.error) { remoteStatusMessage = remoteErrorMessage(created.error); renderStatus(); return showToast(remoteStatusMessage); }
   activeOrganizationId = created.data;
+  organizations = [{ organization_id: created.data, group_id: null, role: "admin", organizations: { id: created.data, name } }];
+  isAdmin = true;
   localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
+  localStorage.setItem("cafe-daniels-created-org", JSON.stringify({ id: created.data, name, userId: currentUser.id }));
   event.target.reset();
-  try { await loadOrganizations(); await loadRemoteState(); render(); showToast("Bereich erstellt – du bist Administrator"); }
-  catch (error) { showToast(remoteErrorMessage(error)); }
+  try { remoteStatusMessage = ""; await loadRemoteState(); render(); showToast("Bereich erstellt – du bist Administrator"); }
+  catch (error) { remoteStatusMessage = remoteErrorMessage(error); render(); showToast(remoteStatusMessage); }
 });
 
 document.querySelector("#group-form").addEventListener("submit", async (event) => {
