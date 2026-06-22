@@ -30,8 +30,8 @@
 
   <div class="app-shell">
     <header class="hero">
-      <div class="brand-mark"><svg class="icon icon-xl"><use href="#icon-beer"/></svg></div>
-      <div><p class="eyebrow">CAFE DANIELS</p><h1>Getränkeverbrauch</h1><p class="subtitle">Verbrauch, Guthaben und Lager.</p></div>
+      <div class="brand-mark"><svg id="profile-fallback-icon" class="icon icon-xl"><use href="#icon-beer"/></svg><img id="profile-photo-display" alt="Profilbild" hidden></div>
+      <div><p class="eyebrow">CAFE DANIELS</p><h1>Getränkeverbrauch</h1><p class="subtitle">Profil: <span id="profile-name-display">nicht eingerichtet</span></p></div>
     </header>
 
     <main>
@@ -56,7 +56,7 @@
           <form id="entry-form">
             <div class="field-group"><label for="beverage">Getränk</label><select id="beverage" name="beverage"></select></div>
             <div class="field-group"><label for="quantity">Anzahl</label><div class="stepper"><button type="button" id="decrease" aria-label="Anzahl verringern">−</button><input id="quantity" name="quantity" type="number" inputmode="numeric" min="1" max="999" value="1" required><button type="button" id="increase" aria-label="Anzahl erhöhen">+</button></div></div>
-            <div class="field-group"><label for="unit-price">Preis pro Getränk</label><div class="price-input"><input id="unit-price" name="unitPrice" type="text" inputmode="decimal" value="3,50" autocomplete="off" required><span>€</span></div></div>
+            <div class="fixed-price-card"><span>Festpreis pro Getränk</span><strong id="fixed-unit-price">0,00 €</strong></div>
             <div class="live-total"><span>Berechneter Betrag</span><strong id="calculated-price">3,50 €</strong></div>
             <button class="primary-button" type="submit"><svg class="icon"><use href="#icon-plus"/></svg> Eintrag speichern</button>
           </form>
@@ -79,11 +79,13 @@
       </section>
 
       <section class="tab-panel" data-tab-panel="settings" aria-label="Einstellungen" hidden>
+        <section class="settings-card"><div class="section-heading"><div><p class="section-label">PROFIL</p><h2>Persönliche Angaben</h2></div><div class="profile-preview"><svg id="settings-profile-fallback" class="icon"><use href="#icon-beer"/></svg><img id="settings-profile-photo" alt="Profilbild Vorschau" hidden></div></div><form id="profile-form"><div class="field-group"><label for="profile-name">Name</label><input id="profile-name" type="text" maxlength="50" placeholder="Dein Name" required></div><label class="photo-button" for="profile-photo">Profilbild aufnehmen oder auswählen</label><input class="sr-only" id="profile-photo" type="file" accept="image/*" capture="user"><button class="primary-button" type="submit">Profil speichern</button></form><p class="form-note">Name und Bild werden ausschließlich auf diesem Gerät gespeichert.</p></section>
+
         <section class="settings-card"><div class="section-heading"><div><p class="section-label">KONTO</p><h2>Kontostand</h2></div><svg class="icon title-icon"><use href="#icon-wallet"/></svg></div><div class="large-value" id="settings-balance">0,00 €</div><form id="deposit-form" class="inline-form"><div class="price-input"><input id="deposit-amount" type="text" inputmode="decimal" placeholder="Betrag" required><span>€</span></div><button class="small-primary" type="submit">Einzahlen</button></form><p class="form-note">Getränkekosten werden automatisch vom Guthaben abgezogen.</p></section>
 
         <section class="settings-card"><div class="section-heading"><div><p class="section-label">LAGER</p><h2>Bierbestand</h2></div><svg class="icon title-icon"><use href="#icon-stock"/></svg></div><div class="large-value"><span id="settings-stock">0</span> <small>Flaschen</small></div><form id="stock-form" class="inline-form"><input id="stock-amount" type="number" inputmode="numeric" min="1" placeholder="Anzahl" required><button class="small-primary" type="submit">Hinzufügen</button></form><p class="form-note">Gespeicherte Bier-Einträge reduzieren den Bestand automatisch.</p></section>
 
-        <section class="settings-card"><div class="section-heading"><div><p class="section-label">GETRÄNKE</p><h2>Auswahl verwalten</h2></div><svg class="icon title-icon"><use href="#icon-drink"/></svg></div><div id="beverage-settings-list" class="settings-list"></div><form id="beverage-form" class="inline-form"><input id="new-beverage" type="text" maxlength="30" placeholder="Weiteres Getränk" required><button class="small-primary" type="submit"><svg class="icon"><use href="#icon-plus"/></svg> Hinzufügen</button></form></section>
+        <section class="settings-card"><div class="section-heading"><div><p class="section-label">GETRÄNKE & PREISE</p><h2>Auswahl verwalten</h2></div><svg class="icon title-icon"><use href="#icon-drink"/></svg></div><p class="form-note">Die hier hinterlegten Preise sind beim Erfassen fest vorgegeben.</p><div id="beverage-settings-list" class="settings-list"></div><form id="beverage-form" class="beverage-add-form"><input id="new-beverage" type="text" maxlength="30" placeholder="Getränkename" required><div class="price-input"><input id="new-beverage-price" type="text" inputmode="decimal" placeholder="Preis" required><span>€</span></div><button class="small-primary" type="submit"><svg class="icon"><use href="#icon-plus"/></svg> Hinzufügen</button></form></section>
 
         <details class="install-help"><summary>App auf dem iPhone installieren</summary><p>In Safari auf <strong>Teilen</strong>, dann auf <strong>Zu Home-Bildschirm hinzufügen</strong> tippen.</p></details>
       </section>

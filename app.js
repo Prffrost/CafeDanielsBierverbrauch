@@ -1,12 +1,12 @@
 const STORAGE_KEY = "cafe-daniels-drink-entries-v1";
 const SETTINGS_KEY = "cafe-daniels-settings-v1";
 const DEFAULT_BEVERAGES = ["Bier", "Spezi", "Cola", "Wein"];
+const DEFAULT_PRICES = { Bier: 3.5, Spezi: 3, Cola: 3, Wein: 4.5 };
 
 const dateInput = document.querySelector("#selected-date");
 const friendlyDate = document.querySelector("#friendly-date");
 const beverageInput = document.querySelector("#beverage");
 const quantityInput = document.querySelector("#quantity");
-const priceInput = document.querySelector("#unit-price");
 const form = document.querySelector("#entry-form");
 const list = document.querySelector("#entry-list");
 const toast = document.querySelector("#toast");
@@ -14,6 +14,7 @@ const toast = document.querySelector("#toast");
 let entries = loadEntries();
 let settings = loadSettings();
 let toastTimer;
+let pendingProfilePhoto = "";
 
 dateInput.value = localDateString(new Date());
 
@@ -25,15 +26,20 @@ function loadEntries() {
 }
 
 function loadSettings() {
-  const fallback = { beverages: [...DEFAULT_BEVERAGES], deposits: 0, beerStockAdded: 0 };
+  const fallback = { beverages: [...DEFAULT_BEVERAGES], prices: { ...DEFAULT_PRICES }, deposits: 0, beerStockAdded: 0, profileName: "", profilePhoto: "" };
   try {
     const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
     if (!stored) return fallback;
     const custom = Array.isArray(stored.beverages) ? stored.beverages.filter((item) => typeof item === "string" && item.trim()) : [];
+    const beverages = [...new Set([...DEFAULT_BEVERAGES, ...custom])];
+    const storedPrices = stored.prices && typeof stored.prices === "object" ? stored.prices : {};
     return {
-      beverages: [...new Set([...DEFAULT_BEVERAGES, ...custom])],
+      beverages,
+      prices: Object.fromEntries(beverages.map((name) => [name, Number(storedPrices[name]) > 0 ? Number(storedPrices[name]) : (DEFAULT_PRICES[name] || 3.5)])),
       deposits: Number(stored.deposits) || 0,
-      beerStockAdded: Number(stored.beerStockAdded) || 0
+      beerStockAdded: Number(stored.beerStockAdded) || 0,
+      profileName: typeof stored.profileName === "string" ? stored.profileName : "",
+      profilePhoto: typeof stored.profilePhoto === "string" ? stored.profilePhoto : ""
     };
   } catch { return fallback; }
 }
@@ -102,6 +108,42 @@ function renderBeverageChoices() {
   const selected = beverageInput.value || "Bier";
   beverageInput.innerHTML = settings.beverages.map((name) => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join("");
   beverageInput.value = settings.beverages.includes(selected) ? selected : settings.beverages[0];
+  document.querySelector("#fixed-unit-price").textContent = currency(settings.prices[beverageInput.value] || 0);
+}
+
+function renderProfile() {
+  const photo = pendingProfilePhoto || settings.profilePhoto;
+  document.querySelector("#profile-name-display").textContent = settings.profileName || "nicht eingerichtet";
+  if (document.activeElement !== document.querySelector("#profile-name")) document.querySelector("#profile-name").value = settings.profileName || "";
+  for (const [imageId, fallbackId] of [["profile-photo-display", "profile-fallback-icon"], ["settings-profile-photo", "settings-profile-fallback"]]) {
+    const image = document.querySelector(`#${imageId}`);
+    const fallback = document.querySelector(`#${fallbackId}`);
+    image.hidden = !photo;
+    fallback.hidden = Boolean(photo);
+    if (photo) image.src = photo;
+  }
+}
+
+function resizePhoto(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = reject;
+      image.onload = () => {
+        const maximum = 512;
+        const scale = Math.min(1, maximum / Math.max(image.width, image.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(image.width * scale);
+        canvas.height = Math.round(image.height * scale);
+        canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.8));
+      };
+      image.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function renderStatus() {
@@ -152,13 +194,14 @@ function renderStatistics() {
 function renderBeverageSettings() {
   document.querySelector("#beverage-settings-list").innerHTML = settings.beverages.map((name) => {
     const isDefault = DEFAULT_BEVERAGES.includes(name);
-    return `<div class="settings-row"><span>${escapeHTML(name)}</span>${isDefault ? '<small>Standard</small>' : `<button type="button" data-delete-beverage="${escapeHTML(name)}" aria-label="${escapeHTML(name)} löschen"><svg class="icon"><use href="#icon-trash"/></svg></button>`}</div>`;
+    return `<div class="settings-row"><span>${escapeHTML(name)}</span><div class="beverage-setting-values"><input class="beverage-price-input" data-price-beverage="${escapeHTML(name)}" type="text" inputmode="decimal" value="${settings.prices[name].toFixed(2).replace(".", ",")}" aria-label="Preis für ${escapeHTML(name)}"><span>€</span>${isDefault ? '' : `<button type="button" data-delete-beverage="${escapeHTML(name)}" aria-label="${escapeHTML(name)} löschen"><svg class="icon"><use href="#icon-trash"/></svg></button>`}</div></div>`;
   }).join("");
 }
 
 function updateCalculatedPrice() {
   const quantity = Number.parseInt(quantityInput.value, 10) || 0;
-  const price = parsePrice(priceInput.value) || 0;
+  const price = settings.prices[beverageInput.value] || 0;
+  document.querySelector("#fixed-unit-price").textContent = currency(price);
   document.querySelector("#calculated-price").textContent = currency(quantity * price);
 }
 
@@ -172,6 +215,8 @@ function render() {
   list.innerHTML = dailyEntries.length ? dailyEntries.map((entry) => `<article class="entry-row"><div class="entry-mug"><svg class="icon"><use href="#${entry.beverage === "Bier" ? "icon-beer" : "icon-drink"}"/></svg></div><div class="entry-info"><strong>${entry.quantity}× ${escapeHTML(entry.beverage)}</strong><span>je ${currency(entry.unitPrice)}</span></div><div class="entry-sum"><strong>${currency(entry.quantity * entry.unitPrice)}</strong><button class="delete-button" type="button" data-delete-id="${entry.id}" aria-label="Eintrag löschen"><svg class="icon"><use href="#icon-trash"/></svg></button></div></article>`).join("") : '<div class="empty-state"><svg class="icon"><use href="#icon-drink"/></svg><p>Noch keine Getränke für diesen Tag.</p></div>';
 
   renderBeverageChoices();
+  updateCalculatedPrice();
+  renderProfile();
   renderStatus();
   renderStatistics();
   renderBeverageSettings();
@@ -187,14 +232,14 @@ function showToast(message) {
 document.querySelector("#decrease").addEventListener("click", () => { quantityInput.value = Math.max(1, (Number.parseInt(quantityInput.value, 10) || 1) - 1); updateCalculatedPrice(); });
 document.querySelector("#increase").addEventListener("click", () => { quantityInput.value = Math.min(999, (Number.parseInt(quantityInput.value, 10) || 0) + 1); updateCalculatedPrice(); });
 quantityInput.addEventListener("input", updateCalculatedPrice);
-priceInput.addEventListener("input", updateCalculatedPrice);
+beverageInput.addEventListener("change", updateCalculatedPrice);
 dateInput.addEventListener("change", render);
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   const quantity = Number.parseInt(quantityInput.value, 10);
-  const unitPrice = parsePrice(priceInput.value);
   const beverage = beverageInput.value;
+  const unitPrice = settings.prices[beverage];
   const total = quantity * unitPrice;
   if (!Number.isInteger(quantity) || quantity < 1 || !Number.isFinite(unitPrice) || unitPrice <= 0) return showToast("Bitte gültige Werte eingeben");
   if (total > accountBalance() + 0.001) return showToast("Guthaben reicht nicht aus");
@@ -240,21 +285,52 @@ document.querySelector("#beverage-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const input = document.querySelector("#new-beverage");
   const name = input.value.trim();
-  if (!name) return;
+  const price = parsePrice(document.querySelector("#new-beverage-price").value);
+  if (!name || !Number.isFinite(price) || price <= 0) return showToast("Name und gültigen Preis eingeben");
   if (settings.beverages.some((item) => item.toLocaleLowerCase("de") === name.toLocaleLowerCase("de"))) return showToast("Getränk ist bereits vorhanden");
-  settings.beverages.push(name); persistSettings(); input.value = ""; render(); beverageInput.value = name; showToast("Getränk hinzugefügt");
+  settings.beverages.push(name);
+  settings.prices[name] = Math.round(price * 100) / 100;
+  persistSettings(); event.target.reset(); render(); beverageInput.value = name; updateCalculatedPrice(); showToast("Getränk hinzugefügt");
 });
 
 document.querySelector("#beverage-settings-list").addEventListener("click", (event) => {
   const button = event.target.closest("[data-delete-beverage]");
   if (!button) return;
   settings.beverages = settings.beverages.filter((name) => name !== button.dataset.deleteBeverage);
+  delete settings.prices[button.dataset.deleteBeverage];
   persistSettings(); render(); showToast("Getränk entfernt");
+});
+
+document.querySelector("#beverage-settings-list").addEventListener("change", (event) => {
+  const input = event.target.closest("[data-price-beverage]");
+  if (!input) return;
+  const price = parsePrice(input.value);
+  if (!Number.isFinite(price) || price <= 0) { renderBeverageSettings(); return showToast("Bitte gültigen Preis eingeben"); }
+  settings.prices[input.dataset.priceBeverage] = Math.round(price * 100) / 100;
+  persistSettings(); render(); updateCalculatedPrice(); showToast("Preis gespeichert");
+});
+
+document.querySelector("#profile-photo").addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    pendingProfilePhoto = await resizePhoto(file);
+    renderProfile();
+  } catch { showToast("Bild konnte nicht verarbeitet werden"); }
+});
+
+document.querySelector("#profile-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const name = document.querySelector("#profile-name").value.trim();
+  if (!name) return showToast("Bitte Namen eingeben");
+  settings.profileName = name;
+  if (pendingProfilePhoto) settings.profilePhoto = pendingProfilePhoto;
+  pendingProfilePhoto = "";
+  persistSettings(); render(); showToast("Profil gespeichert");
 });
 
 document.querySelectorAll("[data-tab]").forEach((button) => button.addEventListener("click", () => setActiveTab(button.dataset.tab)));
 document.querySelectorAll("[data-open-tab]").forEach((button) => button.addEventListener("click", () => setActiveTab(button.dataset.openTab)));
 
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js"));
-updateCalculatedPrice();
 render();
