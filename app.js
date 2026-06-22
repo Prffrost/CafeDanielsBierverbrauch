@@ -5,6 +5,7 @@ const DEFAULT_PRICES = { Bier: 3.5, Spezi: 3, Cola: 3, Wein: 4.5 };
 const SUPABASE_CONFIG = window.CAFE_DANIELS_SUPABASE || {};
 const REMOTE_ENABLED = Boolean(SUPABASE_CONFIG.url && SUPABASE_CONFIG.publishableKey && window.supabase);
 const supabaseClient = REMOTE_ENABLED ? window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.publishableKey) : null;
+const AUTH_REDIRECT_URL = new URL("./", window.location.href).href;
 
 const dateInput = document.querySelector("#selected-date");
 const friendlyDate = document.querySelector("#friendly-date");
@@ -517,8 +518,15 @@ document.querySelector("#register-button").addEventListener("click", async () =>
   const email = document.querySelector("#auth-email").value.trim();
   const password = document.querySelector("#auth-password").value;
   if (!email || password.length < 6) return document.querySelector("#auth-message").textContent = "E-Mail und mindestens 6 Zeichen Passwort eingeben.";
-  const result = await supabaseClient.auth.signUp({ email, password, options: { data: { display_name: settings.profileName || email.split("@")[0] } } });
+  const result = await supabaseClient.auth.signUp({ email, password, options: { emailRedirectTo: AUTH_REDIRECT_URL, data: { display_name: settings.profileName || email.split("@")[0] } } });
   document.querySelector("#auth-message").textContent = result.error ? remoteErrorMessage(result.error) : "Konto erstellt. Bitte E-Mail bestätigen und danach anmelden.";
+});
+
+document.querySelector("#resend-button").addEventListener("click", async () => {
+  const email = document.querySelector("#auth-email").value.trim();
+  if (!email) return document.querySelector("#auth-message").textContent = "Bitte zuerst deine E-Mail eingeben.";
+  const result = await supabaseClient.auth.resend({ type: "signup", email, options: { emailRedirectTo: AUTH_REDIRECT_URL } });
+  document.querySelector("#auth-message").textContent = result.error ? remoteErrorMessage(result.error) : "Neue Bestätigungs-E-Mail wurde versendet.";
 });
 
 document.querySelector("#logout-button").addEventListener("click", async () => {
