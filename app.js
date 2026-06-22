@@ -5,7 +5,8 @@ const DEFAULT_PRICES = { Bier: 3.5, Spezi: 3, Cola: 3, Wein: 4.5 };
 const SUPABASE_CONFIG = window.CAFE_DANIELS_SUPABASE || {};
 const REMOTE_ENABLED = Boolean(SUPABASE_CONFIG.url && SUPABASE_CONFIG.publishableKey && window.supabase);
 const supabaseClient = REMOTE_ENABLED ? window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.publishableKey) : null;
-const AUTH_REDIRECT_URL = new URL("./", window.location.href).href;
+const INVITE_TOKEN = new URLSearchParams(window.location.search).get("invite") || localStorage.getItem("cafe-daniels-invite") || "";
+const AUTH_REDIRECT_URL = `${new URL("./", window.location.href).href}${INVITE_TOKEN ? `?invite=${encodeURIComponent(INVITE_TOKEN)}` : ""}`;
 
 const dateInput = document.querySelector("#selected-date");
 const friendlyDate = document.querySelector("#friendly-date");
@@ -26,6 +27,10 @@ let isAdmin = false;
 let remoteBeerStock = null;
 let remoteBalance = null;
 let remoteBeverageIds = new Map();
+let organizations = [];
+let activeOrganizationId = localStorage.getItem("cafe-daniels-active-org") || "";
+let organizationGroups = [];
+let organizationMembers = [];
 
 dateInput.value = localDateString(new Date());
 
@@ -200,19 +205,28 @@ function remoteErrorMessage(error) {
 }
 
 async function loadRemoteState() {
-  if (!currentUser) return;
-  const [profileResult, beverageResult, consumptionResult, depositResult] = await Promise.all([
-    supabaseClient.from("profiles").select("display_name,is_admin").eq("id", currentUser.id).single(),
-    supabaseClient.from("beverages").select("id,name,price,active").eq("active", true).order("name"),
-    supabaseClient.from("consumptions").select("id,client_id,quantity,unit_price,consumed_at,beverages(id,name)").eq("user_id", currentUser.id).order("consumed_at", { ascending: false }),
-    supabaseClient.from("deposits").select("amount").eq("user_id", currentUser.id)
+  if (!currentUser || !activeOrganizationId) return;
+  const membership = organizations.find((item) => item.organization_id === activeOrganizationId);
+  isAdmin = membership?.role === "admin";
+  const [profileResult, beverageResult, consumptionResult, depositResult, groupResult, memberResult] = await Promise.all([
+    supabaseClient.from("profiles").select("display_name").eq("id", currentUser.id).single(),
+    supabaseClient.from("org_beverages").select("id,name,price,active").eq("organization_id", activeOrganizationId).eq("active", true).order("name"),
+    supabaseClient.from("org_consumptions").select("id,client_id,quantity,unit_price,consumed_at,org_beverages(id,name)").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id).order("consumed_at", { ascending: false }),
+    supabaseClient.from("org_deposits").select("amount").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id),
+    supabaseClient.from("app_groups").select("id,name").eq("organization_id", activeOrganizationId).order("name"),
+    supabaseClient.from("memberships").select("user_id,group_id,role").eq("organization_id", activeOrganizationId)
   ]);
-  const firstError = [profileResult, beverageResult, consumptionResult, depositResult].find((result) => result.error)?.error;
+  const firstError = [profileResult, beverageResult, consumptionResult, depositResult, groupResult, memberResult].find((result) => result.error)?.error;
   if (firstError) throw firstError;
 
   currentProfile = profileResult.data;
-  isAdmin = Boolean(currentProfile?.is_admin);
   if (currentProfile?.display_name) settings.profileName = currentProfile.display_name;
+  organizationGroups = groupResult.data;
+  organizationMembers = memberResult.data;
+  if (organizationMembers.length) {
+    const profileList = await supabaseClient.from("profiles").select("id,display_name").in("id", organizationMembers.map((item) => item.user_id));
+    if (!profileList.error) organizationMembers = organizationMembers.map((item) => ({ ...item, profile: profileList.data.find((profile) => profile.id === item.user_id) }));
+  }
   remoteBeverageIds = new Map(beverageResult.data.map((item) => [item.name, item.id]));
   settings.beverages = beverageResult.data.map((item) => item.name);
   settings.prices = Object.fromEntries(beverageResult.data.map((item) => [item.name, Number(item.price)]));
@@ -223,16 +237,16 @@ async function loadRemoteState() {
     legacy = entries.filter((entry) => !entry.pending && !entry.remote).map((entry) => ({ ...entry, legacy: true }));
     settings.remoteInitialized = true;
   }
-  const remoteEntries = consumptionResult.data.map((item) => ({ id: item.client_id, remoteId: item.id, remote: true, date: item.consumed_at.slice(0, 10), beverage: item.beverages.name, quantity: item.quantity, unitPrice: Number(item.unit_price), createdAt: item.consumed_at }));
+  const remoteEntries = consumptionResult.data.map((item) => ({ id: item.client_id, remoteId: item.id, remote: true, date: item.consumed_at.slice(0, 10), beverage: item.org_beverages.name, quantity: item.quantity, unitPrice: Number(item.unit_price), createdAt: item.consumed_at }));
   entries = [...pending, ...remoteEntries, ...legacy];
   remoteBalance = depositResult.data.reduce((sum, item) => sum + Number(item.amount), 0) - remoteEntries.reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0);
   const beerId = remoteBeverageIds.get("Bier");
   if (beerId) {
-    const stockResult = await supabaseClient.rpc("get_stock", { p_beverage_id: beerId });
+    const stockResult = await supabaseClient.rpc("get_org_stock", { p_org: activeOrganizationId, p_beverage: beerId });
     if (stockResult.error) throw stockResult.error;
     remoteBeerStock = Number(stockResult.data) || 0;
   }
-  persistSettings(); persistEntries(); render();
+  persistSettings(); persistEntries(); render(); renderOrganizationAdmin();
 }
 
 async function syncPendingConsumptions() {
@@ -241,12 +255,38 @@ async function syncPendingConsumptions() {
   for (const entry of pending) {
     const beverageId = remoteBeverageIds.get(entry.beverage);
     if (!beverageId) continue;
-    const result = await supabaseClient.rpc("record_consumption", { p_client_id: entry.id, p_beverage_id: beverageId, p_quantity: entry.quantity, p_consumed_at: `${entry.date}T12:00:00.000Z` });
+    const result = await supabaseClient.rpc("record_org_consumption", { p_client: entry.id, p_org: activeOrganizationId, p_beverage: beverageId, p_quantity: entry.quantity, p_at: `${entry.date}T12:00:00.000Z` });
     if (result.error) { showToast(remoteErrorMessage(result.error)); return; }
     entries = entries.filter((item) => item.id !== entry.id);
   }
   persistEntries();
   await loadRemoteState();
+}
+
+async function loadOrganizations() {
+  let result = await supabaseClient.from("memberships").select("organization_id,group_id,role,organizations(id,name)").eq("user_id", currentUser.id);
+  if (result.error) throw result.error;
+  organizations = result.data;
+  const acceptedKey = `cafe-daniels-accepted-${INVITE_TOKEN}`;
+  if (INVITE_TOKEN && !localStorage.getItem(acceptedKey)) {
+    const accepted = await supabaseClient.rpc("accept_invitation", { p_token: INVITE_TOKEN });
+    if (accepted.error) throw accepted.error;
+    localStorage.setItem(acceptedKey, "1");
+    localStorage.removeItem("cafe-daniels-invite");
+    result = await supabaseClient.from("memberships").select("organization_id,group_id,role,organizations(id,name)").eq("user_id", currentUser.id);
+    if (result.error) throw result.error;
+    organizations = result.data;
+  }
+  if (!organizations.length) {
+    const workspaceName = localStorage.getItem("cafe-daniels-new-workspace") || `${settings.profileName || "Mein"} Bereich`;
+    const created = await supabaseClient.rpc("create_workspace", { p_name: workspaceName });
+    if (created.error) throw created.error;
+    const reload = await supabaseClient.from("memberships").select("organization_id,group_id,role,organizations(id,name)").eq("user_id", currentUser.id);
+    if (reload.error) throw reload.error;
+    organizations = reload.data;
+  }
+  if (!organizations.some((item) => item.organization_id === activeOrganizationId)) activeOrganizationId = organizations[0].organization_id;
+  localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
 }
 
 async function initializeRemote() {
@@ -255,13 +295,13 @@ async function initializeRemote() {
   currentUser = sessionResult.data.session?.user || null;
   document.querySelector("#auth-screen").hidden = Boolean(currentUser);
   if (currentUser) {
-    try { await loadRemoteState(); await syncPendingConsumptions(); }
+    try { await loadOrganizations(); await loadRemoteState(); await syncPendingConsumptions(); }
     catch (error) { showToast(remoteErrorMessage(error)); render(); }
   }
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     currentUser = session?.user || null;
     document.querySelector("#auth-screen").hidden = Boolean(currentUser);
-    if (currentUser) { try { await loadRemoteState(); await syncPendingConsumptions(); } catch (error) { showToast(remoteErrorMessage(error)); } }
+    if (currentUser) { try { await loadOrganizations(); await loadRemoteState(); await syncPendingConsumptions(); } catch (error) { showToast(remoteErrorMessage(error)); } }
   });
 }
 
@@ -277,6 +317,15 @@ function renderStatus() {
   document.querySelector("#sync-dot").classList.toggle("online", Boolean(currentUser && navigator.onLine));
   document.querySelector("#logout-button").hidden = !currentUser;
   document.querySelectorAll("[data-admin-only]").forEach((element) => { element.hidden = REMOTE_ENABLED && !isAdmin; });
+  const workspaceSelect = document.querySelector("#workspace-select");
+  workspaceSelect.innerHTML = organizations.map((item) => `<option value="${item.organization_id}">${escapeHTML(item.organizations.name)}</option>`).join("");
+  workspaceSelect.value = activeOrganizationId;
+}
+
+function renderOrganizationAdmin() {
+  document.querySelector("#groups-list").innerHTML = organizationGroups.map((group) => `<div class="settings-row"><span>${escapeHTML(group.name)}</span><small>Gruppe</small></div>`).join("");
+  document.querySelector("#invite-group").innerHTML = organizationGroups.map((group) => `<option value="${group.id}">${escapeHTML(group.name)}</option>`).join("");
+  document.querySelector("#members-list").innerHTML = organizationMembers.map((member) => `<div class="member-row"><span>${escapeHTML(member.profile?.display_name || member.user_id)}${member.role === "admin" ? " · Admin" : ""}</span><select data-member-user="${member.user_id}" ${member.role === "admin" ? "disabled" : ""}>${organizationGroups.map((group) => `<option value="${group.id}" ${group.id === member.group_id ? "selected" : ""}>${escapeHTML(group.name)}</option>`).join("")}</select></div>`).join("");
 }
 
 function renderStatistics() {
@@ -370,7 +419,7 @@ form.addEventListener("submit", async (event) => {
   if (beverage === "Bier" && quantity > beerStock()) return showToast("Nicht genügend Bier im Lager");
   const newEntry = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, date: dateInput.value, beverage, quantity, unitPrice: Math.round(unitPrice * 100) / 100, createdAt: new Date().toISOString() };
   if (currentUser && navigator.onLine) {
-    const result = await supabaseClient.rpc("record_consumption", { p_client_id: newEntry.id, p_beverage_id: remoteBeverageIds.get(beverage), p_quantity: quantity, p_consumed_at: `${dateInput.value}T12:00:00.000Z` });
+    const result = await supabaseClient.rpc("record_org_consumption", { p_client: newEntry.id, p_org: activeOrganizationId, p_beverage: remoteBeverageIds.get(beverage), p_quantity: quantity, p_at: `${dateInput.value}T12:00:00.000Z` });
     if (result.error) return showToast(remoteErrorMessage(result.error));
     await loadRemoteState();
   } else {
@@ -386,7 +435,7 @@ list.addEventListener("click", async (event) => {
   if (!button) return;
   const entry = entries.find((item) => item.id === button.dataset.deleteId);
   if (entry?.remoteId && currentUser && navigator.onLine) {
-    const result = await supabaseClient.from("consumptions").delete().eq("id", entry.remoteId);
+    const result = await supabaseClient.from("org_consumptions").delete().eq("id", entry.remoteId);
     if (result.error) return showToast(remoteErrorMessage(result.error));
     await loadRemoteState();
     return showToast("Eintrag gelöscht");
@@ -407,7 +456,7 @@ document.querySelector("#deposit-form").addEventListener("submit", async (event)
   if (!Number.isFinite(amount) || amount <= 0) return showToast("Bitte gültigen Betrag eingeben");
   if (currentUser) {
     if (!navigator.onLine) return showToast("Einzahlung benötigt eine Verbindung");
-    const result = await supabaseClient.from("deposits").insert({ client_id: crypto.randomUUID(), user_id: currentUser.id, amount: Math.round(amount * 100) / 100 });
+    const result = await supabaseClient.from("org_deposits").insert({ client_id: crypto.randomUUID(), organization_id: activeOrganizationId, user_id: currentUser.id, amount: Math.round(amount * 100) / 100 });
     if (result.error) return showToast(remoteErrorMessage(result.error));
     event.target.reset(); await loadRemoteState(); return showToast("Guthaben eingezahlt");
   }
@@ -421,7 +470,7 @@ document.querySelector("#stock-form").addEventListener("submit", async (event) =
   if (currentUser) {
     if (!isAdmin) return showToast("Nur für Administratoren");
     if (!navigator.onLine) return showToast("Lagerzugang benötigt eine Verbindung");
-    const result = await supabaseClient.from("stock_movements").insert({ beverage_id: remoteBeverageIds.get("Bier"), quantity: amount, note: "Lagerzugang", created_by: currentUser.id });
+    const result = await supabaseClient.from("org_stock_movements").insert({ organization_id: activeOrganizationId, beverage_id: remoteBeverageIds.get("Bier"), quantity: amount, note: "Lagerzugang", created_by: currentUser.id });
     if (result.error) return showToast(remoteErrorMessage(result.error));
     event.target.reset(); await loadRemoteState(); return showToast("Globaler Bestand erhöht");
   }
@@ -437,7 +486,7 @@ document.querySelector("#beverage-form").addEventListener("submit", async (event
   if (settings.beverages.some((item) => item.toLocaleLowerCase("de") === name.toLocaleLowerCase("de"))) return showToast("Getränk ist bereits vorhanden");
   if (currentUser) {
     if (!isAdmin) return showToast("Nur für Administratoren");
-    const result = await supabaseClient.from("beverages").insert({ name, price: Math.round(price * 100) / 100 });
+    const result = await supabaseClient.from("org_beverages").insert({ organization_id: activeOrganizationId, name, price: Math.round(price * 100) / 100 });
     if (result.error) return showToast(remoteErrorMessage(result.error));
     event.target.reset(); await loadRemoteState(); beverageInput.value = name; updateCalculatedPrice(); return showToast("Getränk hinzugefügt");
   }
@@ -449,7 +498,7 @@ document.querySelector("#beverage-settings-list").addEventListener("click", asyn
   if (!button) return;
   if (currentUser) {
     if (!isAdmin) return showToast("Nur für Administratoren");
-    const result = await supabaseClient.from("beverages").update({ active: false }).eq("id", remoteBeverageIds.get(button.dataset.deleteBeverage));
+    const result = await supabaseClient.from("org_beverages").update({ active: false }).eq("id", remoteBeverageIds.get(button.dataset.deleteBeverage));
     if (result.error) return showToast(remoteErrorMessage(result.error));
     await loadRemoteState(); return showToast("Getränk entfernt");
   }
@@ -465,7 +514,7 @@ document.querySelector("#beverage-settings-list").addEventListener("change", asy
   if (!Number.isFinite(price) || price <= 0) { renderBeverageSettings(); return showToast("Bitte gültigen Preis eingeben"); }
   if (currentUser) {
     if (!isAdmin) return showToast("Nur für Administratoren");
-    const result = await supabaseClient.from("beverages").update({ price: Math.round(price * 100) / 100 }).eq("id", remoteBeverageIds.get(input.dataset.priceBeverage));
+    const result = await supabaseClient.from("org_beverages").update({ price: Math.round(price * 100) / 100 }).eq("id", remoteBeverageIds.get(input.dataset.priceBeverage));
     if (result.error) return showToast(remoteErrorMessage(result.error));
     await loadRemoteState(); return showToast("Globaler Preis gespeichert");
   }
@@ -497,6 +546,51 @@ document.querySelector("#profile-form").addEventListener("submit", async (event)
   render(); showToast("Profil gespeichert");
 });
 
+document.querySelector("#workspace-select").addEventListener("change", async (event) => {
+  activeOrganizationId = event.target.value;
+  localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
+  remoteBeerStock = null; remoteBalance = null;
+  try { await loadRemoteState(); await syncPendingConsumptions(); showToast("Bereich gewechselt"); }
+  catch (error) { showToast(remoteErrorMessage(error)); }
+});
+
+document.querySelector("#group-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!isAdmin) return showToast("Nur für Administratoren");
+  const name = document.querySelector("#new-group-name").value.trim();
+  const result = await supabaseClient.from("app_groups").insert({ organization_id: activeOrganizationId, name });
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  event.target.reset(); await loadRemoteState(); showToast("Gruppe erstellt");
+});
+
+document.querySelector("#invite-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const groupId = document.querySelector("#invite-group").value;
+  const email = document.querySelector("#invite-email").value.trim();
+  const result = await supabaseClient.rpc("create_invitation", { p_org: activeOrganizationId, p_group: groupId, p_email: email || null });
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  const link = `${new URL("./", window.location.href).href}?invite=${encodeURIComponent(result.data.token)}`;
+  document.querySelector("#invite-result").hidden = false;
+  document.querySelector("#invite-link").value = link;
+  const qr = document.querySelector("#invite-qr"); qr.innerHTML = "";
+  if (window.QRCode) new window.QRCode(qr, { text: link, width: 180, height: 180 });
+  document.querySelector("#mail-invite").href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Einladung zu Cafe Daniels")}&body=${encodeURIComponent(`Du wurdest eingeladen. Öffne diesen Link:\n\n${link}`)}`;
+  showToast("Einladung erstellt");
+});
+
+document.querySelector("#copy-invite").addEventListener("click", async () => {
+  await navigator.clipboard.writeText(document.querySelector("#invite-link").value);
+  showToast("Einladungslink kopiert");
+});
+
+document.querySelector("#members-list").addEventListener("change", async (event) => {
+  const select = event.target.closest("[data-member-user]");
+  if (!select || !isAdmin) return;
+  const result = await supabaseClient.from("memberships").update({ group_id: select.value }).eq("organization_id", activeOrganizationId).eq("user_id", select.dataset.memberUser);
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  await loadRemoteState(); showToast("Gruppe geändert");
+});
+
 document.querySelectorAll("[data-period]").forEach((button) => button.addEventListener("click", () => {
   activePeriod = button.dataset.period;
   document.querySelectorAll("[data-period]").forEach((item) => item.classList.toggle("is-active", item === button));
@@ -517,8 +611,14 @@ document.querySelector("#auth-form").addEventListener("submit", async (event) =>
 document.querySelector("#register-button").addEventListener("click", async () => {
   const email = document.querySelector("#auth-email").value.trim();
   const password = document.querySelector("#auth-password").value;
+  const displayName = document.querySelector("#auth-display-name").value.trim() || email.split("@")[0];
+  const workspaceName = document.querySelector("#auth-workspace").value.trim();
   if (!email || password.length < 6) return document.querySelector("#auth-message").textContent = "E-Mail und mindestens 6 Zeichen Passwort eingeben.";
-  const result = await supabaseClient.auth.signUp({ email, password, options: { emailRedirectTo: AUTH_REDIRECT_URL, data: { display_name: settings.profileName || email.split("@")[0] } } });
+  if (!INVITE_TOKEN && !workspaceName) return document.querySelector("#auth-message").textContent = "Bitte einen Namen für deinen Bereich eingeben.";
+  settings.profileName = displayName; persistSettings();
+  if (INVITE_TOKEN) localStorage.setItem("cafe-daniels-invite", INVITE_TOKEN);
+  else localStorage.setItem("cafe-daniels-new-workspace", workspaceName);
+  const result = await supabaseClient.auth.signUp({ email, password, options: { emailRedirectTo: AUTH_REDIRECT_URL, data: { display_name: displayName } } });
   document.querySelector("#auth-message").textContent = result.error ? remoteErrorMessage(result.error) : "Konto erstellt. Bitte E-Mail bestätigen und danach anmelden.";
 });
 
@@ -538,6 +638,12 @@ document.querySelector("#logout-button").addEventListener("click", async () => {
 
 window.addEventListener("online", async () => { renderStatus(); if (currentUser) { try { await loadRemoteState(); await syncPendingConsumptions(); } catch (error) { showToast(remoteErrorMessage(error)); } } });
 window.addEventListener("offline", renderStatus);
+
+if (INVITE_TOKEN) {
+  localStorage.setItem("cafe-daniels-invite", INVITE_TOKEN);
+  document.querySelector("#auth-copy").textContent = "Du wurdest eingeladen. Erstelle ein Konto oder melde dich an, um der vorgesehenen Gruppe beizutreten.";
+  document.querySelector("#auth-workspace").closest(".field-group").hidden = true;
+}
 
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js"));
 render();

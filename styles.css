@@ -15,6 +15,7 @@ button { -webkit-tap-highlight-color:transparent; }
 .secondary-button { width:100%; min-height:48px; margin-top:9px; border:1px solid var(--line); border-radius:15px; color:var(--text); background:transparent; font-weight:700; }
 .text-button { width:100%; margin-top:13px; padding:7px; border:0; color:var(--amber-light); background:transparent; font-size:12px; font-weight:700; }
 .account-email { margin-top:17px; font-weight:750; }
+.workspace-field { margin-top:16px; }
 .sync-dot { width:12px; height:12px; border-radius:50%; background:var(--muted); box-shadow:0 0 0 5px rgba(255,255,255,.04); }
 .sync-dot.online { background:#6edb8f; }
 [data-admin-only][hidden] { display:none; }
@@ -144,6 +145,15 @@ form { margin-top:22px; }
 .beverage-price-input:focus { border-color:var(--amber); }
 .beverage-add-form { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:9px; margin-top:16px; }
 .beverage-add-form #new-beverage { grid-column:1 / -1; }
+.invite-result { margin-top:17px; padding:15px; border:1px solid var(--line); border-radius:17px; background:#17120e; }
+.invite-result #invite-qr { display:grid; min-height:190px; place-items:center; padding:10px; border-radius:12px; background:#fff; }
+.invite-result #invite-link { width:100%; margin-top:10px; padding:11px; border:1px solid var(--line); border-radius:11px; color:var(--text); background:var(--surface); font-size:11px; }
+.invite-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:9px; }
+.invite-actions .small-primary { text-decoration:none; }
+.members-title { margin-top:25px; }
+.member-row { display:grid; grid-template-columns:minmax(0,1fr) 125px; align-items:center; gap:8px; padding:10px 0; border-bottom:1px solid var(--line); }
+.member-row span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.member-row select { min-height:38px; border:1px solid var(--line); border-radius:10px; color:var(--text); background:#17120e; }
 
 .tab-bar { position:fixed; left:50%; bottom:0; z-index:20; display:grid; width:min(100%,680px); grid-template-columns:repeat(4,1fr); padding:8px 8px max(8px,env(safe-area-inset-bottom)); border-top:1px solid rgba(255,255,255,.1); background:rgba(20,16,12,.9); box-shadow:0 -12px 36px rgba(0,0,0,.3); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); transform:translateX(-50%); }
 .tab-button { display:grid; min-height:57px; place-items:center; align-content:center; gap:3px; border:0; border-radius:15px; color:var(--muted); background:transparent; font-size:9px; font-weight:700; }

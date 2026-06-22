@@ -32,8 +32,8 @@
     <div class="auth-card">
       <div class="brand-mark"><svg class="icon icon-xl"><use href="#icon-beer"/></svg></div>
       <p class="eyebrow">CAFE DANIELS</p><h1>Anmelden</h1>
-      <p class="auth-copy">Mit deinem Konto werden Verbrauch, Guthaben und Lager sicher synchronisiert.</p>
-      <form id="auth-form"><div class="field-group"><label for="auth-email">E-Mail</label><input id="auth-email" type="email" autocomplete="email" required></div><div class="field-group"><label for="auth-password">Passwort</label><input id="auth-password" type="password" minlength="6" autocomplete="current-password" required></div><button class="primary-button" type="submit">Anmelden</button><button class="secondary-button" id="register-button" type="button">Neues Konto erstellen</button><button class="text-button" id="resend-button" type="button">Bestätigungs-E-Mail erneut senden</button></form>
+      <p class="auth-copy" id="auth-copy">Mit deinem Konto werden Verbrauch, Guthaben und Lager sicher synchronisiert.</p>
+      <form id="auth-form"><div class="field-group"><label for="auth-display-name">Name</label><input id="auth-display-name" type="text" autocomplete="name" placeholder="Dein Name"></div><div class="field-group"><label for="auth-workspace">Name des eigenen Bereichs</label><input id="auth-workspace" type="text" placeholder="z. B. Cafe Daniels"></div><div class="field-group"><label for="auth-email">E-Mail</label><input id="auth-email" type="email" autocomplete="email" required></div><div class="field-group"><label for="auth-password">Passwort</label><input id="auth-password" type="password" minlength="6" autocomplete="current-password" required></div><button class="primary-button" type="submit">Anmelden</button><button class="secondary-button" id="register-button" type="button">Neues Konto erstellen</button><button class="text-button" id="resend-button" type="button">Bestätigungs-E-Mail erneut senden</button></form>
       <p class="form-note" id="auth-message"></p>
     </div>
   </section>
@@ -91,7 +91,9 @@
       </section>
 
       <section class="tab-panel" data-tab-panel="settings" aria-label="Einstellungen" hidden>
-        <section class="settings-card" id="account-card"><div class="section-heading"><div><p class="section-label">VERBINDUNG</p><h2>Benutzerkonto</h2></div><span class="sync-dot" id="sync-dot"></span></div><p class="account-email" id="account-email">Lokal</p><p class="form-note" id="account-role">Keine Serververbindung</p><button class="secondary-button" id="logout-button" type="button">Abmelden</button></section>
+        <section class="settings-card" id="account-card"><div class="section-heading"><div><p class="section-label">VERBINDUNG</p><h2>Benutzerkonto</h2></div><span class="sync-dot" id="sync-dot"></span></div><p class="account-email" id="account-email">Lokal</p><p class="form-note" id="account-role">Keine Serververbindung</p><div class="field-group workspace-field"><label for="workspace-select">Aktiver Bereich</label><select id="workspace-select"></select></div><button class="secondary-button" id="logout-button" type="button">Abmelden</button></section>
+
+        <section class="settings-card" data-admin-only><div class="section-heading"><div><p class="section-label">GRUPPEN & EINLADUNGEN</p><h2>Mitglieder verwalten</h2></div><svg class="icon title-icon"><use href="#icon-days"/></svg></div><form id="group-form" class="inline-form"><input id="new-group-name" type="text" maxlength="40" placeholder="Neue Gruppe" required><button class="small-primary" type="submit">Erstellen</button></form><div id="groups-list" class="settings-list"></div><form id="invite-form"><div class="field-group"><label for="invite-group">Gruppe für den neuen Benutzer</label><select id="invite-group" required></select></div><div class="field-group"><label for="invite-email">E-Mail optional</label><input id="invite-email" type="email" placeholder="name@beispiel.de"></div><button class="primary-button" type="submit">Einladung erzeugen</button></form><div class="invite-result" id="invite-result" hidden><div id="invite-qr"></div><input id="invite-link" type="text" readonly><div class="invite-actions"><button class="small-primary" id="copy-invite" type="button">Link kopieren</button><a class="small-primary" id="mail-invite" href="#">Per Mail senden</a></div></div><h3 class="members-title">Mitglieder</h3><div id="members-list" class="settings-list"></div></section>
 
         <section class="settings-card"><div class="section-heading"><div><p class="section-label">PROFIL</p><h2>Persönliche Angaben</h2></div><div class="profile-preview"><svg id="settings-profile-fallback" class="icon"><use href="#icon-beer"/></svg><img id="settings-profile-photo" alt="Profilbild Vorschau" hidden></div></div><form id="profile-form"><div class="field-group"><label for="profile-name">Name</label><input id="profile-name" type="text" maxlength="50" placeholder="Dein Name" required></div><label class="photo-button" for="profile-photo">Profilbild aufnehmen oder auswählen</label><input class="sr-only" id="profile-photo" type="file" accept="image/*" capture="user"><button class="primary-button" type="submit">Profil speichern</button></form><p class="form-note">Name und Bild werden ausschließlich auf diesem Gerät gespeichert.</p></section>
 
@@ -115,6 +117,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="supabase-config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="app.js" defer></script>
 </body>
 </html>
