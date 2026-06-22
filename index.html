@@ -99,6 +99,30 @@
         <div id="entry-list"></div>
       </section>
 
+      <section class="statistics" aria-labelledby="statistics-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">GESAMTÜBERSICHT</p>
+            <h2 id="statistics-heading">Verbrauchsstatistik</h2>
+          </div>
+        </div>
+
+        <div class="statistics-grid">
+          <article class="stat-box"><span>Trinktage</span><strong id="stat-days">0</strong></article>
+          <article class="stat-box"><span>Getränke gesamt</span><strong id="stat-drinks">0</strong></article>
+          <article class="stat-box"><span>Kosten gesamt</span><strong id="stat-cost">0,00 €</strong></article>
+          <article class="stat-box"><span>Ø pro Trinktag</span><strong id="stat-average">0,0</strong></article>
+        </div>
+
+        <div class="chart-card" id="consumption-chart" aria-label="Getränkeverbrauch nach Tag"></div>
+
+        <div class="days-heading">
+          <h3>Tage mit Verbrauch</h3>
+          <span>Tag · Getränke · Kosten</span>
+        </div>
+        <div id="days-list"></div>
+      </section>
+
       <details class="install-help">
         <summary>App auf dem iPhone installieren</summary>
         <p>In Safari unten auf <strong>Teilen</strong> tippen und anschließend <strong>Zum Home-Bildschirm</strong> auswählen.</p>
@@ -110,4 +134,3 @@
   <script src="app.js" defer></script>
 </body>
 </html>
-

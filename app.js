@@ -49,6 +49,63 @@ function formattedDate(value) {
   }).format(new Date(`${value}T12:00:00`));
 }
 
+function shortDate(value) {
+  return new Intl.DateTimeFormat("de-DE", {
+    day: "2-digit",
+    month: "2-digit"
+  }).format(new Date(`${value}T12:00:00`));
+}
+
+function groupEntriesByDay() {
+  const grouped = new Map();
+  for (const entry of entries) {
+    const current = grouped.get(entry.date) || { date: entry.date, quantity: 0, cost: 0, entries: 0 };
+    current.quantity += entry.quantity;
+    current.cost += entry.quantity * entry.unitPrice;
+    current.entries += 1;
+    grouped.set(entry.date, current);
+  }
+  return [...grouped.values()].sort((a, b) => b.date.localeCompare(a.date));
+}
+
+function renderStatistics() {
+  const days = groupEntriesByDay();
+  const drinks = days.reduce((sum, day) => sum + day.quantity, 0);
+  const cost = days.reduce((sum, day) => sum + day.cost, 0);
+
+  document.querySelector("#stat-days").textContent = days.length;
+  document.querySelector("#stat-drinks").textContent = drinks;
+  document.querySelector("#stat-cost").textContent = currency(cost);
+  document.querySelector("#stat-average").textContent = days.length
+    ? new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(drinks / days.length)
+    : "0,0";
+
+  const chartDays = days.slice(0, 7).reverse();
+  const chart = document.querySelector("#consumption-chart");
+  if (chartDays.length === 0) {
+    chart.innerHTML = '<p class="chart-empty">Die Statistik erscheint nach deinem ersten Eintrag.</p>';
+  } else {
+    const maximum = Math.max(...chartDays.map((day) => day.quantity), 1);
+    chart.innerHTML = chartDays.map((day) => `
+      <div class="chart-column" title="${formattedDate(day.date)}: ${day.quantity} Getränke">
+        <span class="chart-value">${day.quantity}</span>
+        <div class="chart-track"><div class="chart-bar" style="height: ${Math.max(7, (day.quantity / maximum) * 100)}%"></div></div>
+        <span class="chart-label">${shortDate(day.date)}</span>
+      </div>`).join("");
+  }
+
+  const daysList = document.querySelector("#days-list");
+  if (days.length === 0) {
+    daysList.innerHTML = '<p class="days-empty">Noch keine Trinktage vorhanden.</p>';
+  } else {
+    daysList.innerHTML = days.map((day) => `
+      <button class="day-row" type="button" data-day="${day.date}">
+        <span class="day-date"><strong>${formattedDate(day.date)}</strong><span>${day.entries} ${day.entries === 1 ? "Eintrag" : "Einträge"}</span></span>
+        <span class="day-values"><strong>${currency(day.cost)}</strong><span>${day.quantity} ${day.quantity === 1 ? "Getränk" : "Getränke"}</span></span>
+      </button>`).join("");
+  }
+}
+
 function updateCalculatedPrice() {
   const quantity = Number.parseInt(quantityInput.value, 10) || 0;
   const price = parsePrice(priceInput.value) || 0;
@@ -67,6 +124,7 @@ function render() {
   document.querySelector("#total-quantity").textContent = totalQuantity;
   document.querySelector("#total-price").textContent = currency(totalPrice);
   document.querySelector("#entry-count").textContent = dailyEntries.length;
+  renderStatistics();
 
   if (dailyEntries.length === 0) {
     list.innerHTML = `
@@ -145,10 +203,17 @@ list.addEventListener("click", (event) => {
   showToast("Eintrag gelöscht");
 });
 
+document.querySelector("#days-list").addEventListener("click", (event) => {
+  const row = event.target.closest("[data-day]");
+  if (!row) return;
+  dateInput.value = row.dataset.day;
+  render();
+  document.querySelector(".date-card").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js"));
 }
 
 updateCalculatedPrice();
 render();
-

@@ -1,4 +1,4 @@
-const CACHE_NAME = "daniels-bierliste-v1";
+const CACHE_NAME = "daniels-bierliste-v2";
 const APP_FILES = [
   "./",
   "./index.html",
@@ -33,4 +33,3 @@ self.addEventListener("fetch", (event) => {
       .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./index.html")))
   );
 });
-

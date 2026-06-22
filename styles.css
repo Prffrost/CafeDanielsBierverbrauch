@@ -62,7 +62,7 @@ h2 { margin-top: 4px; font-size: 21px; letter-spacing: -.35px; }
 .eyebrow, .section-label { color: var(--amber); font-size: 11px; font-weight: 800; letter-spacing: 1.7px; }
 .subtitle { margin-top: 6px; color: var(--muted); font-size: 14px; }
 
-.date-card, .entry-card, .history, .install-help {
+.date-card, .entry-card, .history, .statistics, .install-help {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: rgba(33, 26, 20, 0.88);
@@ -101,7 +101,7 @@ h2 { margin-top: 4px; font-size: 21px; letter-spacing: -.35px; }
 .accent .summary-label { color: rgba(35, 23, 8, .67); }
 .summary-card strong { margin-top: 2px; align-self: end; font-size: 30px; letter-spacing: -1px; }
 
-.entry-card, .history { padding: 21px 19px; }
+.entry-card, .history, .statistics { padding: 21px 19px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 form { margin-top: 22px; }
 .field-group + .field-group { margin-top: 18px; }
@@ -139,6 +139,30 @@ form { margin-top: 22px; }
 .entry-sum strong { display: block; font-size: 16px; }
 .delete-button { margin-top: 4px; padding: 3px 0 3px 10px; border: 0; color: var(--danger); background: transparent; font-size: 11px; }
 
+.statistics { margin-top: 13px; }
+.statistics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 19px; }
+.stat-box { min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 15px; background: #17120e; }
+.stat-box span { display: block; min-height: 30px; color: var(--muted); font-size: 11px; line-height: 1.25; }
+.stat-box strong { display: block; margin-top: 5px; overflow: hidden; color: var(--amber-light); font-size: clamp(20px, 6vw, 25px); letter-spacing: -.6px; text-overflow: ellipsis; white-space: nowrap; }
+.chart-card { display: flex; align-items: end; gap: 8px; min-height: 154px; margin-top: 11px; padding: 18px 13px 11px; border: 1px solid var(--line); border-radius: 17px; background: #17120e; overflow-x: auto; }
+.chart-column { display: grid; flex: 1 0 38px; height: 121px; grid-template-rows: 18px 1fr 22px; align-items: end; text-align: center; }
+.chart-value { color: var(--muted); font-size: 10px; font-weight: 700; }
+.chart-track { display: flex; height: 76px; align-items: end; justify-content: center; }
+.chart-bar { width: min(25px, 70%); min-height: 5px; border-radius: 7px 7px 3px 3px; background: linear-gradient(180deg, var(--amber-light), #ed9400); box-shadow: 0 4px 12px rgba(255,178,28,.16); }
+.chart-label { align-self: end; color: var(--muted); font-size: 9px; }
+.chart-empty { width: 100%; align-self: center; color: var(--muted); text-align: center; font-size: 13px; }
+.days-heading { display: flex; align-items: end; justify-content: space-between; margin: 22px 1px 7px; }
+.days-heading h3 { margin: 0; font-size: 16px; }
+.days-heading span { color: var(--muted); font-size: 10px; }
+.day-row { display: grid; width: 100%; grid-template-columns: 1fr auto; align-items: center; gap: 12px; padding: 14px 2px; border: 0; border-bottom: 1px solid var(--line); color: var(--text); background: transparent; text-align: left; }
+.day-row:last-child { border-bottom: 0; padding-bottom: 2px; }
+.day-row:active { opacity: .65; }
+.day-date strong, .day-date span, .day-values strong, .day-values span { display: block; }
+.day-date span, .day-values span { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.day-values { text-align: right; }
+.day-values strong { color: var(--amber-light); }
+.days-empty { padding: 19px 0 3px; color: var(--muted); text-align: center; font-size: 13px; }
+
 .install-help { margin-top: 13px; padding: 17px 19px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .install-help summary { color: var(--text); cursor: pointer; font-weight: 700; }
 .install-help p { margin-top: 10px; }
@@ -149,9 +173,9 @@ form { margin-top: 22px; }
 
 @media (min-width: 640px) {
   .app-shell { padding-left: 28px; padding-right: 28px; }
+  .statistics-grid { grid-template-columns: repeat(4, 1fr); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
-
