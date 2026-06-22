@@ -1,0 +1,21 @@
+{
+  "name": "Cafe Daniels Bierverbrauch",
+  "short_name": "Bierliste",
+  "description": "Getränkeverbrauch im Cafe Daniels erfassen.",
+  "lang": "de-DE",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#110e0b",
+  "theme_color": "#17120d",
+  "icons": [
+    {
+      "src": "icons/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
+

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#17120d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Daniels Bierliste">
+  <meta name="description" content="Getränkeverbrauch im Cafe Daniels erfassen.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/app-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/app-icon.svg">
+  <link rel="stylesheet" href="styles.css">
+  <title>Cafe Daniels Bierverbrauch</title>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="hero">
+      <div class="brand-mark" aria-hidden="true">🍺</div>
+      <div>
+        <p class="eyebrow">CAFE DANIELS</p>
+        <h1>Bierverbrauch</h1>
+        <p class="subtitle">Einfach zählen. Sauber abrechnen.</p>
+      </div>
+    </header>
+
+    <main>
+      <section class="date-card" aria-labelledby="date-heading">
+        <div>
+          <p class="section-label" id="date-heading">Ausgewählter Tag</p>
+          <p class="friendly-date" id="friendly-date"></p>
+        </div>
+        <label class="calendar-button">
+          <span aria-hidden="true">📅</span>
+          <span class="sr-only">Datum auswählen</span>
+          <input id="selected-date" type="date">
+        </label>
+      </section>
+
+      <section class="summary-grid" aria-label="Tagesübersicht">
+        <article class="summary-card">
+          <span class="summary-icon" aria-hidden="true">🍻</span>
+          <span class="summary-label">Getränke</span>
+          <strong id="total-quantity">0</strong>
+        </article>
+        <article class="summary-card accent">
+          <span class="summary-icon" aria-hidden="true">€</span>
+          <span class="summary-label">Gesamt</span>
+          <strong id="total-price">0,00 €</strong>
+        </article>
+      </section>
+
+      <section class="entry-card" aria-labelledby="entry-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">NEUER EINTRAG</p>
+            <h2 id="entry-heading">Getränke eintragen</h2>
+          </div>
+        </div>
+
+        <form id="entry-form">
+          <div class="field-group">
+            <label for="quantity">Anzahl der Getränke</label>
+            <div class="stepper">
+              <button type="button" id="decrease" aria-label="Anzahl verringern">−</button>
+              <input id="quantity" name="quantity" type="number" inputmode="numeric" min="1" max="999" value="1" required>
+              <button type="button" id="increase" aria-label="Anzahl erhöhen">+</button>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label for="unit-price">Preis pro Getränk</label>
+            <div class="price-input">
+              <input id="unit-price" name="unitPrice" type="text" inputmode="decimal" value="3,50" autocomplete="off" required>
+              <span>€</span>
+            </div>
+          </div>
+
+          <div class="live-total">
+            <span>Berechneter Betrag</span>
+            <strong id="calculated-price">3,50 €</strong>
+          </div>
+
+          <button class="primary-button" type="submit">
+            <span aria-hidden="true">＋</span> Eintrag speichern
+          </button>
+        </form>
+      </section>
+
+      <section class="history" aria-labelledby="history-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">TAGESLISTE</p>
+            <h2 id="history-heading">Gespeicherte Einträge</h2>
+          </div>
+          <span class="count-badge" id="entry-count">0</span>
+        </div>
+        <div id="entry-list"></div>
+      </section>
+
+      <details class="install-help">
+        <summary>App auf dem iPhone installieren</summary>
+        <p>In Safari unten auf <strong>Teilen</strong> tippen und anschließend <strong>Zum Home-Bildschirm</strong> auswählen.</p>
+      </details>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js" defer></script>
+</body>
+</html>
+
