@@ -1,4 +1,4 @@
-const CACHE_NAME = "daniels-bierliste-v2";
+const CACHE_NAME = "daniels-bierliste-v3";
 const APP_FILES = [
   "./",
   "./index.html",

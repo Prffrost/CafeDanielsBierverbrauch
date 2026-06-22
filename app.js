@@ -13,6 +13,22 @@ let toastTimer;
 
 dateInput.value = localDateString(new Date());
 
+function setActiveTab(tabName) {
+  document.querySelectorAll("[data-tab-panel]").forEach((panel) => {
+    const isActive = panel.dataset.tabPanel === tabName;
+    panel.hidden = !isActive;
+    panel.classList.toggle("is-active", isActive);
+  });
+
+  document.querySelectorAll("[data-tab]").forEach((button) => {
+    const isActive = button.dataset.tab === tabName;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+  });
+
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
 function localDateString(date) {
   const offset = date.getTimezoneOffset() * 60_000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
@@ -208,7 +224,11 @@ document.querySelector("#days-list").addEventListener("click", (event) => {
   if (!row) return;
   dateInput.value = row.dataset.day;
   render();
-  document.querySelector(".date-card").scrollIntoView({ behavior: "smooth", block: "start" });
+  setActiveTab("entry");
+});
+
+document.querySelectorAll("[data-tab]").forEach((button) => {
+  button.addEventListener("click", () => setActiveTab(button.dataset.tab));
 });
 
 if ("serviceWorker" in navigator) {

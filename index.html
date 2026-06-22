@@ -26,6 +26,7 @@
     </header>
 
     <main>
+      <section class="tab-panel is-active" data-tab-panel="entry" aria-label="Getränke erfassen">
       <section class="date-card" aria-labelledby="date-heading">
         <div>
           <p class="section-label" id="date-heading">Ausgewählter Tag</p>
@@ -98,7 +99,25 @@
         </div>
         <div id="entry-list"></div>
       </section>
+      </section>
 
+      <section class="tab-panel" data-tab-panel="days" aria-label="Übersicht der Trinktage" hidden>
+        <section class="days-overview" aria-labelledby="days-heading-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-label">TAGESÜBERSICHT</p>
+              <h2 id="days-heading-title">Tage mit Verbrauch</h2>
+            </div>
+          </div>
+          <div class="days-heading">
+            <span>Tag</span>
+            <span>Getränke · Kosten</span>
+          </div>
+          <div id="days-list"></div>
+        </section>
+      </section>
+
+      <section class="tab-panel" data-tab-panel="statistics" aria-label="Verbrauchsstatistik" hidden>
       <section class="statistics" aria-labelledby="statistics-heading">
         <div class="section-heading">
           <div>
@@ -116,19 +135,30 @@
 
         <div class="chart-card" id="consumption-chart" aria-label="Getränkeverbrauch nach Tag"></div>
 
-        <div class="days-heading">
-          <h3>Tage mit Verbrauch</h3>
-          <span>Tag · Getränke · Kosten</span>
-        </div>
-        <div id="days-list"></div>
       </section>
 
       <details class="install-help">
         <summary>App auf dem iPhone installieren</summary>
         <p>In Safari unten auf <strong>Teilen</strong> tippen und anschließend <strong>Zum Home-Bildschirm</strong> auswählen.</p>
       </details>
+      </section>
     </main>
   </div>
+
+  <nav class="tab-bar" aria-label="Hauptnavigation">
+    <button class="tab-button is-active" type="button" data-tab="entry" aria-selected="true">
+      <span class="tab-icon" aria-hidden="true">＋</span>
+      <span>Erfassen</span>
+    </button>
+    <button class="tab-button" type="button" data-tab="days" aria-selected="false">
+      <span class="tab-icon" aria-hidden="true">📅</span>
+      <span>Tage</span>
+    </button>
+    <button class="tab-button" type="button" data-tab="statistics" aria-selected="false">
+      <span class="tab-icon" aria-hidden="true">▥</span>
+      <span>Statistik</span>
+    </button>
+  </nav>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="app.js" defer></script>

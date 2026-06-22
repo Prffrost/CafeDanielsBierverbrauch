@@ -34,8 +34,12 @@ button { -webkit-tap-highlight-color: transparent; }
 .app-shell {
   width: min(100%, 680px);
   margin: 0 auto;
-  padding: max(22px, env(safe-area-inset-top)) 18px max(36px, env(safe-area-inset-bottom));
+  padding: max(22px, env(safe-area-inset-top)) 18px calc(104px + env(safe-area-inset-bottom));
 }
+
+.tab-panel[hidden] { display: none; }
+.tab-panel.is-active { animation: tab-in .22s ease-out; }
+@keyframes tab-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 
 .hero {
   display: flex;
@@ -62,7 +66,7 @@ h2 { margin-top: 4px; font-size: 21px; letter-spacing: -.35px; }
 .eyebrow, .section-label { color: var(--amber); font-size: 11px; font-weight: 800; letter-spacing: 1.7px; }
 .subtitle { margin-top: 6px; color: var(--muted); font-size: 14px; }
 
-.date-card, .entry-card, .history, .statistics, .install-help {
+.date-card, .entry-card, .history, .days-overview, .statistics, .install-help {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: rgba(33, 26, 20, 0.88);
@@ -101,7 +105,7 @@ h2 { margin-top: 4px; font-size: 21px; letter-spacing: -.35px; }
 .accent .summary-label { color: rgba(35, 23, 8, .67); }
 .summary-card strong { margin-top: 2px; align-self: end; font-size: 30px; letter-spacing: -1px; }
 
-.entry-card, .history, .statistics { padding: 21px 19px; }
+.entry-card, .history, .days-overview, .statistics { padding: 21px 19px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 form { margin-top: 22px; }
 .field-group + .field-group { margin-top: 18px; }
@@ -124,6 +128,7 @@ form { margin-top: 22px; }
 .primary-button:active { transform: scale(.985); }
 
 .history { margin-top: 13px; }
+.days-overview { min-height: 320px; }
 .count-badge { display: grid; min-width: 30px; height: 30px; padding: 0 9px; place-items: center; border-radius: 99px; color: var(--amber); background: rgba(255,178,28,.12); font-size: 13px; font-weight: 800; }
 .empty-state { padding: 33px 10px 14px; color: var(--muted); text-align: center; }
 .empty-state span { display: block; margin-bottom: 9px; font-size: 31px; filter: grayscale(1); opacity: .65; }
@@ -162,6 +167,11 @@ form { margin-top: 22px; }
 .day-values { text-align: right; }
 .day-values strong { color: var(--amber-light); }
 .days-empty { padding: 19px 0 3px; color: var(--muted); text-align: center; font-size: 13px; }
+
+.tab-bar { position: fixed; left: 50%; bottom: 0; z-index: 20; display: grid; width: min(100%, 680px); grid-template-columns: repeat(3, 1fr); padding: 8px 12px max(8px, env(safe-area-inset-bottom)); border-top: 1px solid rgba(255,255,255,.1); background: rgba(20, 16, 12, .9); box-shadow: 0 -12px 36px rgba(0,0,0,.3); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); transform: translateX(-50%); }
+.tab-button { display: grid; min-height: 57px; place-items: center; align-content: center; gap: 3px; border: 0; border-radius: 15px; color: var(--muted); background: transparent; font-size: 10px; font-weight: 700; }
+.tab-button.is-active { color: var(--amber-light); background: rgba(255,178,28,.1); }
+.tab-icon { font-size: 21px; line-height: 1; }
 
 .install-help { margin-top: 13px; padding: 17px 19px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .install-help summary { color: var(--text); cursor: pointer; font-weight: 700; }
