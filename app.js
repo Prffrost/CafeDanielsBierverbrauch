@@ -285,6 +285,7 @@ async function loadOrganizations() {
     if (reload.error) throw reload.error;
     organizations = reload.data;
   }
+  if (!organizations.length) throw new Error("Noch kein Bereich vorhanden. Bitte unter Einstellungen einen Bereich erstellen.");
   if (!organizations.some((item) => item.organization_id === activeOrganizationId)) activeOrganizationId = organizations[0].organization_id;
   localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
 }
@@ -313,13 +314,14 @@ function renderStatus() {
   document.querySelector("#quick-stock").textContent = `${stock} Fl.`;
   document.querySelector("#settings-stock").textContent = stock;
   document.querySelector("#account-email").textContent = currentUser?.email || "Lokaler Modus";
-  document.querySelector("#account-role").textContent = currentUser ? (isAdmin ? "Administrator · synchronisiert" : "Benutzer · synchronisiert") : "Keine Serververbindung";
+  document.querySelector("#account-role").textContent = currentUser ? (!organizations.length ? "Noch kein Bereich eingerichtet" : (isAdmin ? "Administrator · synchronisiert" : "Benutzer · synchronisiert")) : "Keine Serververbindung";
   document.querySelector("#sync-dot").classList.toggle("online", Boolean(currentUser && navigator.onLine));
   document.querySelector("#logout-button").hidden = !currentUser;
   document.querySelectorAll("[data-admin-only]").forEach((element) => { element.hidden = REMOTE_ENABLED && !isAdmin; });
   const workspaceSelect = document.querySelector("#workspace-select");
   workspaceSelect.innerHTML = organizations.map((item) => `<option value="${item.organization_id}">${escapeHTML(item.organizations.name)}</option>`).join("");
   workspaceSelect.value = activeOrganizationId;
+  workspaceSelect.disabled = !organizations.length;
 }
 
 function renderOrganizationAdmin() {
@@ -455,6 +457,7 @@ document.querySelector("#deposit-form").addEventListener("submit", async (event)
   const amount = parsePrice(document.querySelector("#deposit-amount").value);
   if (!Number.isFinite(amount) || amount <= 0) return showToast("Bitte gültigen Betrag eingeben");
   if (currentUser) {
+    if (!activeOrganizationId) return showToast("Bitte zuerst einen aktiven Bereich erstellen");
     if (!navigator.onLine) return showToast("Einzahlung benötigt eine Verbindung");
     const result = await supabaseClient.from("org_deposits").insert({ client_id: crypto.randomUUID(), organization_id: activeOrganizationId, user_id: currentUser.id, amount: Math.round(amount * 100) / 100 });
     if (result.error) return showToast(remoteErrorMessage(result.error));
@@ -551,6 +554,21 @@ document.querySelector("#workspace-select").addEventListener("change", async (ev
   localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
   remoteBeerStock = null; remoteBalance = null;
   try { await loadRemoteState(); await syncPendingConsumptions(); showToast("Bereich gewechselt"); }
+  catch (error) { showToast(remoteErrorMessage(error)); }
+});
+
+document.querySelector("#workspace-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!currentUser) return showToast("Bitte zuerst anmelden");
+  if (!navigator.onLine) return showToast("Bereichserstellung benötigt eine Verbindung");
+  const name = document.querySelector("#workspace-name").value.trim();
+  if (!name) return showToast("Bitte einen Bereichsnamen eingeben");
+  const created = await supabaseClient.rpc("create_workspace", { p_name: name });
+  if (created.error) return showToast(remoteErrorMessage(created.error));
+  activeOrganizationId = created.data;
+  localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
+  event.target.reset();
+  try { await loadOrganizations(); await loadRemoteState(); render(); showToast("Bereich erstellt – du bist Administrator"); }
   catch (error) { showToast(remoteErrorMessage(error)); }
 });
 
