@@ -7,6 +7,16 @@ button { -webkit-tap-highlight-color:transparent; }
 .icon-sprite { position:absolute; width:0; height:0; overflow:hidden; }
 .icon { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
 .icon-xl { width:34px; height:34px; }
+.auth-screen { position:fixed; inset:0; z-index:100; display:grid; place-items:center; padding:22px; background:radial-gradient(circle at 80% 0%,rgba(255,178,28,.15),transparent 28rem),var(--bg); }
+.auth-screen[hidden] { display:none; }
+.auth-card { width:min(100%,430px); padding:27px 23px; border:1px solid var(--line); border-radius:26px; background:var(--surface); box-shadow:0 25px 70px rgba(0,0,0,.45); }
+.auth-card .brand-mark { margin-bottom:20px; }
+.auth-copy { margin-top:12px; color:var(--muted); font-size:14px; line-height:1.5; }
+.secondary-button { width:100%; min-height:48px; margin-top:9px; border:1px solid var(--line); border-radius:15px; color:var(--text); background:transparent; font-weight:700; }
+.account-email { margin-top:17px; font-weight:750; }
+.sync-dot { width:12px; height:12px; border-radius:50%; background:var(--muted); box-shadow:0 0 0 5px rgba(255,255,255,.04); }
+.sync-dot.online { background:#6edb8f; }
+[data-admin-only][hidden] { display:none; }
 .app-shell { width:min(100%,680px); margin:0 auto; padding:max(22px,env(safe-area-inset-top)) 18px calc(104px + env(safe-area-inset-bottom)); }
 .tab-panel[hidden] { display:none; }
 .tab-panel.is-active { animation:tab-in .22s ease-out; }
@@ -83,6 +93,10 @@ form { margin-top:22px; }
 .delete-button .icon { width:16px; height:16px; }
 
 .statistics-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:19px; }
+.period-switch { display:grid; grid-template-columns:repeat(3,1fr); gap:5px; margin-top:19px; padding:4px; border:1px solid var(--line); border-radius:15px; background:#17120e; }
+.period-switch button { min-height:39px; border:0; border-radius:11px; color:var(--muted); background:transparent; font-size:12px; font-weight:750; }
+.period-switch button.is-active { color:#241708; background:var(--amber); }
+.period-caption { margin:11px 2px 0; color:var(--muted); font-size:12px; text-align:center; }
 .stat-box { min-width:0; padding:14px; border:1px solid var(--line); border-radius:15px; background:#17120e; }
 .stat-box span { display:block; min-height:30px; color:var(--muted); font-size:11px; line-height:1.25; }
 .stat-box strong { display:block; margin-top:5px; overflow:hidden; color:var(--amber-light); font-size:clamp(20px,6vw,25px); letter-spacing:-.6px; text-overflow:ellipsis; white-space:nowrap; }

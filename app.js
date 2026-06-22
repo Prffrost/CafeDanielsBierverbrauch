@@ -2,6 +2,9 @@ const STORAGE_KEY = "cafe-daniels-drink-entries-v1";
 const SETTINGS_KEY = "cafe-daniels-settings-v1";
 const DEFAULT_BEVERAGES = ["Bier", "Spezi", "Cola", "Wein"];
 const DEFAULT_PRICES = { Bier: 3.5, Spezi: 3, Cola: 3, Wein: 4.5 };
+const SUPABASE_CONFIG = window.CAFE_DANIELS_SUPABASE || {};
+const REMOTE_ENABLED = Boolean(SUPABASE_CONFIG.url && SUPABASE_CONFIG.publishableKey && window.supabase);
+const supabaseClient = REMOTE_ENABLED ? window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.publishableKey) : null;
 
 const dateInput = document.querySelector("#selected-date");
 const friendlyDate = document.querySelector("#friendly-date");
@@ -15,6 +18,13 @@ let entries = loadEntries();
 let settings = loadSettings();
 let toastTimer;
 let pendingProfilePhoto = "";
+let activePeriod = "week";
+let currentUser = null;
+let currentProfile = null;
+let isAdmin = false;
+let remoteBeerStock = null;
+let remoteBalance = null;
+let remoteBeverageIds = new Map();
 
 dateInput.value = localDateString(new Date());
 
@@ -26,7 +36,7 @@ function loadEntries() {
 }
 
 function loadSettings() {
-  const fallback = { beverages: [...DEFAULT_BEVERAGES], prices: { ...DEFAULT_PRICES }, deposits: 0, beerStockAdded: 0, profileName: "", profilePhoto: "" };
+  const fallback = { beverages: [...DEFAULT_BEVERAGES], prices: { ...DEFAULT_PRICES }, deposits: 0, beerStockAdded: 0, profileName: "", profilePhoto: "", remoteInitialized: false };
   try {
     const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
     if (!stored) return fallback;
@@ -39,7 +49,8 @@ function loadSettings() {
       deposits: Number(stored.deposits) || 0,
       beerStockAdded: Number(stored.beerStockAdded) || 0,
       profileName: typeof stored.profileName === "string" ? stored.profileName : "",
-      profilePhoto: typeof stored.profilePhoto === "string" ? stored.profilePhoto : ""
+      profilePhoto: typeof stored.profilePhoto === "string" ? stored.profilePhoto : "",
+      remoteInitialized: Boolean(stored.remoteInitialized)
     };
   } catch { return fallback; }
 }
@@ -73,9 +84,9 @@ function escapeHTML(value) {
 }
 
 function totalSpent() { return entries.reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0); }
-function accountBalance() { return settings.deposits - totalSpent(); }
+function accountBalance() { return remoteBalance === null ? settings.deposits - totalSpent() : remoteBalance - entries.filter((entry) => entry.pending).reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0); }
 function beerConsumed() { return entries.filter((entry) => entry.beverage === "Bier").reduce((sum, entry) => sum + entry.quantity, 0); }
-function beerStock() { return settings.beerStockAdded - beerConsumed(); }
+function beerStock() { return remoteBeerStock === null ? settings.beerStockAdded - beerConsumed() : remoteBeerStock - entries.filter((entry) => entry.pending && entry.beverage === "Bier").reduce((sum, entry) => sum + entry.quantity, 0); }
 
 function setActiveTab(tabName) {
   document.querySelectorAll("[data-tab-panel]").forEach((panel) => {
@@ -91,9 +102,9 @@ function setActiveTab(tabName) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function groupEntriesByDay() {
+function groupEntriesByDay(sourceEntries = entries) {
   const grouped = new Map();
-  for (const entry of entries) {
+  for (const entry of sourceEntries) {
     const day = grouped.get(entry.date) || { date: entry.date, quantity: 0, cost: 0, entries: 0, beverages: new Map() };
     day.quantity += entry.quantity;
     day.cost += entry.quantity * entry.unitPrice;
@@ -102,6 +113,40 @@ function groupEntriesByDay() {
     grouped.set(entry.date, day);
   }
   return [...grouped.values()].sort((a, b) => b.date.localeCompare(a.date));
+}
+
+function periodRange(period) {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const start = new Date(now);
+  const end = new Date(now);
+  if (period === "week") {
+    start.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+    end.setTime(start.getTime()); end.setDate(start.getDate() + 7);
+  } else if (period === "month") {
+    start.setDate(1);
+    end.setFullYear(start.getFullYear(), start.getMonth() + 1, 1);
+  } else {
+    start.setMonth(0, 1);
+    end.setFullYear(start.getFullYear() + 1, 0, 1);
+  }
+  const dateFormat = new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", year: period === "year" ? "numeric" : undefined });
+  const caption = period === "year" ? `${start.getFullYear()}` : `${dateFormat.format(start)} – ${dateFormat.format(new Date(end.getTime() - 86_400_000))}`;
+  return { start, end, caption };
+}
+
+function chartGroups(periodEntries, range) {
+  const groups = [];
+  if (activePeriod === "year") {
+    for (let month = 0; month < 12; month += 1) groups.push({ key: month, label: new Intl.DateTimeFormat("de-DE", { month: "short" }).format(new Date(range.start.getFullYear(), month, 1)), quantity: 0 });
+    for (const entry of periodEntries) groups[new Date(`${entry.date}T12:00:00`).getMonth()].quantity += entry.quantity;
+  } else {
+    const cursor = new Date(range.start);
+    while (cursor < range.end) { groups.push({ key: localDateString(cursor), label: activePeriod === "week" ? new Intl.DateTimeFormat("de-DE", { weekday: "short" }).format(cursor) : new Intl.DateTimeFormat("de-DE", { day: "2-digit" }).format(cursor), quantity: 0 }); cursor.setDate(cursor.getDate() + 1); }
+    const lookup = new Map(groups.map((group) => [group.key, group]));
+    for (const entry of periodEntries) if (lookup.has(entry.date)) lookup.get(entry.date).quantity += entry.quantity;
+  }
+  return groups;
 }
 
 function renderBeverageChoices() {
@@ -146,6 +191,79 @@ function resizePhoto(file) {
   });
 }
 
+function remoteErrorMessage(error) {
+  const message = error?.message || "Synchronisierung fehlgeschlagen";
+  if (message.includes("Guthaben")) return "Guthaben reicht nicht aus";
+  if (message.includes("Lagerbestand")) return "Lagerbestand reicht nicht aus";
+  return message;
+}
+
+async function loadRemoteState() {
+  if (!currentUser) return;
+  const [profileResult, beverageResult, consumptionResult, depositResult] = await Promise.all([
+    supabaseClient.from("profiles").select("display_name,is_admin").eq("id", currentUser.id).single(),
+    supabaseClient.from("beverages").select("id,name,price,active").eq("active", true).order("name"),
+    supabaseClient.from("consumptions").select("id,client_id,quantity,unit_price,consumed_at,beverages(id,name)").eq("user_id", currentUser.id).order("consumed_at", { ascending: false }),
+    supabaseClient.from("deposits").select("amount").eq("user_id", currentUser.id)
+  ]);
+  const firstError = [profileResult, beverageResult, consumptionResult, depositResult].find((result) => result.error)?.error;
+  if (firstError) throw firstError;
+
+  currentProfile = profileResult.data;
+  isAdmin = Boolean(currentProfile?.is_admin);
+  if (currentProfile?.display_name) settings.profileName = currentProfile.display_name;
+  remoteBeverageIds = new Map(beverageResult.data.map((item) => [item.name, item.id]));
+  settings.beverages = beverageResult.data.map((item) => item.name);
+  settings.prices = Object.fromEntries(beverageResult.data.map((item) => [item.name, Number(item.price)]));
+
+  const pending = entries.filter((entry) => entry.pending);
+  let legacy = entries.filter((entry) => entry.legacy);
+  if (!settings.remoteInitialized) {
+    legacy = entries.filter((entry) => !entry.pending && !entry.remote).map((entry) => ({ ...entry, legacy: true }));
+    settings.remoteInitialized = true;
+  }
+  const remoteEntries = consumptionResult.data.map((item) => ({ id: item.client_id, remoteId: item.id, remote: true, date: item.consumed_at.slice(0, 10), beverage: item.beverages.name, quantity: item.quantity, unitPrice: Number(item.unit_price), createdAt: item.consumed_at }));
+  entries = [...pending, ...remoteEntries, ...legacy];
+  remoteBalance = depositResult.data.reduce((sum, item) => sum + Number(item.amount), 0) - remoteEntries.reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0);
+  const beerId = remoteBeverageIds.get("Bier");
+  if (beerId) {
+    const stockResult = await supabaseClient.rpc("get_stock", { p_beverage_id: beerId });
+    if (stockResult.error) throw stockResult.error;
+    remoteBeerStock = Number(stockResult.data) || 0;
+  }
+  persistSettings(); persistEntries(); render();
+}
+
+async function syncPendingConsumptions() {
+  if (!currentUser || !navigator.onLine) return;
+  const pending = entries.filter((entry) => entry.pending);
+  for (const entry of pending) {
+    const beverageId = remoteBeverageIds.get(entry.beverage);
+    if (!beverageId) continue;
+    const result = await supabaseClient.rpc("record_consumption", { p_client_id: entry.id, p_beverage_id: beverageId, p_quantity: entry.quantity, p_consumed_at: `${entry.date}T12:00:00.000Z` });
+    if (result.error) { showToast(remoteErrorMessage(result.error)); return; }
+    entries = entries.filter((item) => item.id !== entry.id);
+  }
+  persistEntries();
+  await loadRemoteState();
+}
+
+async function initializeRemote() {
+  if (!REMOTE_ENABLED) return render();
+  const sessionResult = await supabaseClient.auth.getSession();
+  currentUser = sessionResult.data.session?.user || null;
+  document.querySelector("#auth-screen").hidden = Boolean(currentUser);
+  if (currentUser) {
+    try { await loadRemoteState(); await syncPendingConsumptions(); }
+    catch (error) { showToast(remoteErrorMessage(error)); render(); }
+  }
+  supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+    currentUser = session?.user || null;
+    document.querySelector("#auth-screen").hidden = Boolean(currentUser);
+    if (currentUser) { try { await loadRemoteState(); await syncPendingConsumptions(); } catch (error) { showToast(remoteErrorMessage(error)); } }
+  });
+}
+
 function renderStatus() {
   const balance = accountBalance();
   const stock = beerStock();
@@ -153,28 +271,33 @@ function renderStatus() {
   document.querySelector("#settings-balance").textContent = currency(balance);
   document.querySelector("#quick-stock").textContent = `${stock} Fl.`;
   document.querySelector("#settings-stock").textContent = stock;
+  document.querySelector("#account-email").textContent = currentUser?.email || "Lokaler Modus";
+  document.querySelector("#account-role").textContent = currentUser ? (isAdmin ? "Administrator · synchronisiert" : "Benutzer · synchronisiert") : "Keine Serververbindung";
+  document.querySelector("#sync-dot").classList.toggle("online", Boolean(currentUser && navigator.onLine));
+  document.querySelector("#logout-button").hidden = !currentUser;
+  document.querySelectorAll("[data-admin-only]").forEach((element) => { element.hidden = REMOTE_ENABLED && !isAdmin; });
 }
 
 function renderStatistics() {
-  const days = groupEntriesByDay();
+  const range = periodRange(activePeriod);
+  const periodEntries = entries.filter((entry) => { const date = new Date(`${entry.date}T12:00:00`); return date >= range.start && date < range.end; });
+  const days = groupEntriesByDay(periodEntries);
+  const allDays = groupEntriesByDay();
   const drinks = days.reduce((sum, day) => sum + day.quantity, 0);
   const cost = days.reduce((sum, day) => sum + day.cost, 0);
+  document.querySelector("#period-caption").textContent = range.caption;
   document.querySelector("#stat-days").textContent = days.length;
   document.querySelector("#stat-drinks").textContent = drinks;
   document.querySelector("#stat-cost").textContent = currency(cost);
   document.querySelector("#stat-average").textContent = days.length ? new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(drinks / days.length) : "0,0";
 
-  const chartDays = days.slice(0, 7).reverse();
+  const chartDays = chartGroups(periodEntries, range);
   const chart = document.querySelector("#consumption-chart");
-  if (!chartDays.length) {
-    chart.innerHTML = '<p class="chart-empty">Die Statistik erscheint nach deinem ersten Eintrag.</p>';
-  } else {
-    const maximum = Math.max(...chartDays.map((day) => day.quantity), 1);
-    chart.innerHTML = chartDays.map((day) => `<div class="chart-column" title="${escapeHTML(formattedDate(day.date))}: ${day.quantity} Getränke"><span class="chart-value">${day.quantity}</span><div class="chart-track"><div class="chart-bar" style="height:${Math.max(7, (day.quantity / maximum) * 100)}%"></div></div><span class="chart-label">${shortDate(day.date)}</span></div>`).join("");
-  }
+  const maximum = Math.max(...chartDays.map((day) => day.quantity), 1);
+  chart.innerHTML = chartDays.map((day) => `<div class="chart-column" title="${day.label}: ${day.quantity} Getränke"><span class="chart-value">${day.quantity || ""}</span><div class="chart-track"><div class="chart-bar" style="height:${day.quantity ? Math.max(7, (day.quantity / maximum) * 100) : 0}%"></div></div><span class="chart-label">${day.label}</span></div>`).join("");
 
   const totals = new Map();
-  for (const entry of entries) {
+  for (const entry of periodEntries) {
     const value = totals.get(entry.beverage) || { quantity: 0, cost: 0 };
     value.quantity += entry.quantity;
     value.cost += entry.quantity * entry.unitPrice;
@@ -185,7 +308,7 @@ function renderStatistics() {
     : '<p class="days-empty">Noch keine Verbrauchsdaten.</p>';
 
   const daysList = document.querySelector("#days-list");
-  daysList.innerHTML = days.length ? days.map((day) => {
+  daysList.innerHTML = allDays.length ? allDays.map((day) => {
     const types = [...day.beverages.entries()].map(([name, quantity]) => `${quantity}× ${escapeHTML(name)}`).join(" · ");
     return `<button class="day-row" type="button" data-day="${day.date}"><span class="day-date"><strong>${formattedDate(day.date)}</strong><span>${types}</span></span><span class="day-values"><strong>${currency(day.cost)}</strong><span>${day.quantity} Getränke</span></span></button>`;
   }).join("") : '<p class="days-empty">Noch keine Verbrauchstage vorhanden.</p>';
@@ -194,7 +317,7 @@ function renderStatistics() {
 function renderBeverageSettings() {
   document.querySelector("#beverage-settings-list").innerHTML = settings.beverages.map((name) => {
     const isDefault = DEFAULT_BEVERAGES.includes(name);
-    return `<div class="settings-row"><span>${escapeHTML(name)}</span><div class="beverage-setting-values"><input class="beverage-price-input" data-price-beverage="${escapeHTML(name)}" type="text" inputmode="decimal" value="${settings.prices[name].toFixed(2).replace(".", ",")}" aria-label="Preis für ${escapeHTML(name)}"><span>€</span>${isDefault ? '' : `<button type="button" data-delete-beverage="${escapeHTML(name)}" aria-label="${escapeHTML(name)} löschen"><svg class="icon"><use href="#icon-trash"/></svg></button>`}</div></div>`;
+    return `<div class="settings-row"><span>${escapeHTML(name)}</span><div class="beverage-setting-values"><input class="beverage-price-input" data-price-beverage="${escapeHTML(name)}" type="text" inputmode="decimal" value="${settings.prices[name].toFixed(2).replace(".", ",")}" aria-label="Preis für ${escapeHTML(name)}" ${REMOTE_ENABLED && !isAdmin ? "disabled" : ""}><span>€</span>${isDefault || (REMOTE_ENABLED && !isAdmin) ? '' : `<button type="button" data-delete-beverage="${escapeHTML(name)}" aria-label="${escapeHTML(name)} löschen"><svg class="icon"><use href="#icon-trash"/></svg></button>`}</div></div>`;
   }).join("");
 }
 
@@ -235,7 +358,7 @@ quantityInput.addEventListener("input", updateCalculatedPrice);
 beverageInput.addEventListener("change", updateCalculatedPrice);
 dateInput.addEventListener("change", render);
 
-form.addEventListener("submit", (event) => {
+form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const quantity = Number.parseInt(quantityInput.value, 10);
   const beverage = beverageInput.value;
@@ -244,17 +367,29 @@ form.addEventListener("submit", (event) => {
   if (!Number.isInteger(quantity) || quantity < 1 || !Number.isFinite(unitPrice) || unitPrice <= 0) return showToast("Bitte gültige Werte eingeben");
   if (total > accountBalance() + 0.001) return showToast("Guthaben reicht nicht aus");
   if (beverage === "Bier" && quantity > beerStock()) return showToast("Nicht genügend Bier im Lager");
-  entries.push({ id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, date: dateInput.value, beverage, quantity, unitPrice: Math.round(unitPrice * 100) / 100, createdAt: new Date().toISOString() });
-  persistEntries();
+  const newEntry = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, date: dateInput.value, beverage, quantity, unitPrice: Math.round(unitPrice * 100) / 100, createdAt: new Date().toISOString() };
+  if (currentUser && navigator.onLine) {
+    const result = await supabaseClient.rpc("record_consumption", { p_client_id: newEntry.id, p_beverage_id: remoteBeverageIds.get(beverage), p_quantity: quantity, p_consumed_at: `${dateInput.value}T12:00:00.000Z` });
+    if (result.error) return showToast(remoteErrorMessage(result.error));
+    await loadRemoteState();
+  } else {
+    entries.push({ ...newEntry, pending: Boolean(REMOTE_ENABLED) });
+    persistEntries();
+  }
   quantityInput.value = 1;
-  updateCalculatedPrice();
-  render();
-  showToast("Eintrag gespeichert");
+  render(); showToast(currentUser && navigator.onLine ? "Eintrag synchronisiert" : "Offline gespeichert");
 });
 
-list.addEventListener("click", (event) => {
+list.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-delete-id]");
   if (!button) return;
+  const entry = entries.find((item) => item.id === button.dataset.deleteId);
+  if (entry?.remoteId && currentUser && navigator.onLine) {
+    const result = await supabaseClient.from("consumptions").delete().eq("id", entry.remoteId);
+    if (result.error) return showToast(remoteErrorMessage(result.error));
+    await loadRemoteState();
+    return showToast("Eintrag gelöscht");
+  }
   entries = entries.filter((entry) => entry.id !== button.dataset.deleteId);
   persistEntries(); render(); showToast("Eintrag gelöscht");
 });
@@ -265,47 +400,74 @@ document.querySelector("#days-list").addEventListener("click", (event) => {
   dateInput.value = row.dataset.day; render(); setActiveTab("entry");
 });
 
-document.querySelector("#deposit-form").addEventListener("submit", (event) => {
+document.querySelector("#deposit-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const amount = parsePrice(document.querySelector("#deposit-amount").value);
   if (!Number.isFinite(amount) || amount <= 0) return showToast("Bitte gültigen Betrag eingeben");
-  settings.deposits += Math.round(amount * 100) / 100;
-  persistSettings(); event.target.reset(); render(); showToast("Guthaben eingezahlt");
+  if (currentUser) {
+    if (!navigator.onLine) return showToast("Einzahlung benötigt eine Verbindung");
+    const result = await supabaseClient.from("deposits").insert({ client_id: crypto.randomUUID(), user_id: currentUser.id, amount: Math.round(amount * 100) / 100 });
+    if (result.error) return showToast(remoteErrorMessage(result.error));
+    event.target.reset(); await loadRemoteState(); return showToast("Guthaben eingezahlt");
+  }
+  settings.deposits += Math.round(amount * 100) / 100; persistSettings(); event.target.reset(); render(); showToast("Guthaben eingezahlt");
 });
 
-document.querySelector("#stock-form").addEventListener("submit", (event) => {
+document.querySelector("#stock-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const amount = Number.parseInt(document.querySelector("#stock-amount").value, 10);
   if (!Number.isInteger(amount) || amount < 1) return showToast("Bitte gültige Anzahl eingeben");
-  settings.beerStockAdded += amount;
-  persistSettings(); event.target.reset(); render(); showToast("Bierbestand erhöht");
+  if (currentUser) {
+    if (!isAdmin) return showToast("Nur für Administratoren");
+    if (!navigator.onLine) return showToast("Lagerzugang benötigt eine Verbindung");
+    const result = await supabaseClient.from("stock_movements").insert({ beverage_id: remoteBeverageIds.get("Bier"), quantity: amount, note: "Lagerzugang", created_by: currentUser.id });
+    if (result.error) return showToast(remoteErrorMessage(result.error));
+    event.target.reset(); await loadRemoteState(); return showToast("Globaler Bestand erhöht");
+  }
+  settings.beerStockAdded += amount; persistSettings(); event.target.reset(); render(); showToast("Bierbestand erhöht");
 });
 
-document.querySelector("#beverage-form").addEventListener("submit", (event) => {
+document.querySelector("#beverage-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const input = document.querySelector("#new-beverage");
   const name = input.value.trim();
   const price = parsePrice(document.querySelector("#new-beverage-price").value);
   if (!name || !Number.isFinite(price) || price <= 0) return showToast("Name und gültigen Preis eingeben");
   if (settings.beverages.some((item) => item.toLocaleLowerCase("de") === name.toLocaleLowerCase("de"))) return showToast("Getränk ist bereits vorhanden");
-  settings.beverages.push(name);
-  settings.prices[name] = Math.round(price * 100) / 100;
-  persistSettings(); event.target.reset(); render(); beverageInput.value = name; updateCalculatedPrice(); showToast("Getränk hinzugefügt");
+  if (currentUser) {
+    if (!isAdmin) return showToast("Nur für Administratoren");
+    const result = await supabaseClient.from("beverages").insert({ name, price: Math.round(price * 100) / 100 });
+    if (result.error) return showToast(remoteErrorMessage(result.error));
+    event.target.reset(); await loadRemoteState(); beverageInput.value = name; updateCalculatedPrice(); return showToast("Getränk hinzugefügt");
+  }
+  settings.beverages.push(name); settings.prices[name] = Math.round(price * 100) / 100; persistSettings(); event.target.reset(); render(); beverageInput.value = name; updateCalculatedPrice(); showToast("Getränk hinzugefügt");
 });
 
-document.querySelector("#beverage-settings-list").addEventListener("click", (event) => {
+document.querySelector("#beverage-settings-list").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-delete-beverage]");
   if (!button) return;
+  if (currentUser) {
+    if (!isAdmin) return showToast("Nur für Administratoren");
+    const result = await supabaseClient.from("beverages").update({ active: false }).eq("id", remoteBeverageIds.get(button.dataset.deleteBeverage));
+    if (result.error) return showToast(remoteErrorMessage(result.error));
+    await loadRemoteState(); return showToast("Getränk entfernt");
+  }
   settings.beverages = settings.beverages.filter((name) => name !== button.dataset.deleteBeverage);
   delete settings.prices[button.dataset.deleteBeverage];
   persistSettings(); render(); showToast("Getränk entfernt");
 });
 
-document.querySelector("#beverage-settings-list").addEventListener("change", (event) => {
+document.querySelector("#beverage-settings-list").addEventListener("change", async (event) => {
   const input = event.target.closest("[data-price-beverage]");
   if (!input) return;
   const price = parsePrice(input.value);
   if (!Number.isFinite(price) || price <= 0) { renderBeverageSettings(); return showToast("Bitte gültigen Preis eingeben"); }
+  if (currentUser) {
+    if (!isAdmin) return showToast("Nur für Administratoren");
+    const result = await supabaseClient.from("beverages").update({ price: Math.round(price * 100) / 100 }).eq("id", remoteBeverageIds.get(input.dataset.priceBeverage));
+    if (result.error) return showToast(remoteErrorMessage(result.error));
+    await loadRemoteState(); return showToast("Globaler Preis gespeichert");
+  }
   settings.prices[input.dataset.priceBeverage] = Math.round(price * 100) / 100;
   persistSettings(); render(); updateCalculatedPrice(); showToast("Preis gespeichert");
 });
@@ -319,18 +481,56 @@ document.querySelector("#profile-photo").addEventListener("change", async (event
   } catch { showToast("Bild konnte nicht verarbeitet werden"); }
 });
 
-document.querySelector("#profile-form").addEventListener("submit", (event) => {
+document.querySelector("#profile-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const name = document.querySelector("#profile-name").value.trim();
   if (!name) return showToast("Bitte Namen eingeben");
   settings.profileName = name;
   if (pendingProfilePhoto) settings.profilePhoto = pendingProfilePhoto;
   pendingProfilePhoto = "";
-  persistSettings(); render(); showToast("Profil gespeichert");
+  persistSettings();
+  if (currentUser && navigator.onLine) {
+    const result = await supabaseClient.from("profiles").update({ display_name: name }).eq("id", currentUser.id);
+    if (result.error) return showToast(remoteErrorMessage(result.error));
+  }
+  render(); showToast("Profil gespeichert");
 });
+
+document.querySelectorAll("[data-period]").forEach((button) => button.addEventListener("click", () => {
+  activePeriod = button.dataset.period;
+  document.querySelectorAll("[data-period]").forEach((item) => item.classList.toggle("is-active", item === button));
+  renderStatistics();
+}));
 
 document.querySelectorAll("[data-tab]").forEach((button) => button.addEventListener("click", () => setActiveTab(button.dataset.tab)));
 document.querySelectorAll("[data-open-tab]").forEach((button) => button.addEventListener("click", () => setActiveTab(button.dataset.openTab)));
 
+document.querySelector("#auth-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const email = document.querySelector("#auth-email").value.trim();
+  const password = document.querySelector("#auth-password").value;
+  const result = await supabaseClient.auth.signInWithPassword({ email, password });
+  document.querySelector("#auth-message").textContent = result.error ? remoteErrorMessage(result.error) : "Anmeldung erfolgreich";
+});
+
+document.querySelector("#register-button").addEventListener("click", async () => {
+  const email = document.querySelector("#auth-email").value.trim();
+  const password = document.querySelector("#auth-password").value;
+  if (!email || password.length < 6) return document.querySelector("#auth-message").textContent = "E-Mail und mindestens 6 Zeichen Passwort eingeben.";
+  const result = await supabaseClient.auth.signUp({ email, password, options: { data: { display_name: settings.profileName || email.split("@")[0] } } });
+  document.querySelector("#auth-message").textContent = result.error ? remoteErrorMessage(result.error) : "Konto erstellt. Bitte E-Mail bestätigen und danach anmelden.";
+});
+
+document.querySelector("#logout-button").addEventListener("click", async () => {
+  if (!supabaseClient) return;
+  await supabaseClient.auth.signOut();
+  currentUser = null; currentProfile = null; isAdmin = false; remoteBeerStock = null; remoteBalance = null;
+  document.querySelector("#auth-screen").hidden = false;
+});
+
+window.addEventListener("online", async () => { renderStatus(); if (currentUser) { try { await loadRemoteState(); await syncPendingConsumptions(); } catch (error) { showToast(remoteErrorMessage(error)); } } });
+window.addEventListener("offline", renderStatus);
+
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js"));
 render();
+initializeRemote();

@@ -1,9 +1,11 @@
-const CACHE_NAME = "daniels-bierliste-v5";
+const CACHE_NAME = "daniels-bierliste-v6";
 const APP_FILES = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
+  "./supabase-config.js",
+  "./supabase-setup.sql",
   "./manifest.webmanifest",
   "./icons/app-icon.svg"
 ];

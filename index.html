@@ -28,6 +28,16 @@
     <symbol id="icon-drink" viewBox="0 0 24 24"><path d="M6 3h12l-1 18H7L6 3Zm1 5h10M9 12h6"/></symbol>
   </svg>
 
+  <section class="auth-screen" id="auth-screen" hidden>
+    <div class="auth-card">
+      <div class="brand-mark"><svg class="icon icon-xl"><use href="#icon-beer"/></svg></div>
+      <p class="eyebrow">CAFE DANIELS</p><h1>Anmelden</h1>
+      <p class="auth-copy">Mit deinem Konto werden Verbrauch, Guthaben und Lager sicher synchronisiert.</p>
+      <form id="auth-form"><div class="field-group"><label for="auth-email">E-Mail</label><input id="auth-email" type="email" autocomplete="email" required></div><div class="field-group"><label for="auth-password">Passwort</label><input id="auth-password" type="password" minlength="6" autocomplete="current-password" required></div><button class="primary-button" type="submit">Anmelden</button><button class="secondary-button" id="register-button" type="button">Neues Konto erstellen</button></form>
+      <p class="form-note" id="auth-message"></p>
+    </div>
+  </section>
+
   <div class="app-shell">
     <header class="hero">
       <div class="brand-mark"><svg id="profile-fallback-icon" class="icon icon-xl"><use href="#icon-beer"/></svg><img id="profile-photo-display" alt="Profilbild" hidden></div>
@@ -72,6 +82,8 @@
       <section class="tab-panel" data-tab-panel="statistics" aria-label="Verbrauchsstatistik" hidden>
         <section class="statistics" aria-labelledby="statistics-heading">
           <div class="section-heading"><div><p class="section-label">GESAMTÜBERSICHT</p><h2 id="statistics-heading">Verbrauchsstatistik</h2></div></div>
+          <div class="period-switch" role="group" aria-label="Zeitraum auswählen"><button class="is-active" type="button" data-period="week">Woche</button><button type="button" data-period="month">Monat</button><button type="button" data-period="year">Jahr</button></div>
+          <p class="period-caption" id="period-caption"></p>
           <div class="statistics-grid"><article class="stat-box"><span>Verbrauchstage</span><strong id="stat-days">0</strong></article><article class="stat-box"><span>Getränke gesamt</span><strong id="stat-drinks">0</strong></article><article class="stat-box"><span>Kosten gesamt</span><strong id="stat-cost">0,00 €</strong></article><article class="stat-box"><span>Ø pro Tag</span><strong id="stat-average">0,0</strong></article></div>
           <div class="chart-card" id="consumption-chart" aria-label="Getränkeverbrauch nach Tag"></div>
           <div class="breakdown-heading"><h3>Nach Getränk</h3></div><div id="beverage-breakdown"></div>
@@ -79,13 +91,15 @@
       </section>
 
       <section class="tab-panel" data-tab-panel="settings" aria-label="Einstellungen" hidden>
+        <section class="settings-card" id="account-card"><div class="section-heading"><div><p class="section-label">VERBINDUNG</p><h2>Benutzerkonto</h2></div><span class="sync-dot" id="sync-dot"></span></div><p class="account-email" id="account-email">Lokal</p><p class="form-note" id="account-role">Keine Serververbindung</p><button class="secondary-button" id="logout-button" type="button">Abmelden</button></section>
+
         <section class="settings-card"><div class="section-heading"><div><p class="section-label">PROFIL</p><h2>Persönliche Angaben</h2></div><div class="profile-preview"><svg id="settings-profile-fallback" class="icon"><use href="#icon-beer"/></svg><img id="settings-profile-photo" alt="Profilbild Vorschau" hidden></div></div><form id="profile-form"><div class="field-group"><label for="profile-name">Name</label><input id="profile-name" type="text" maxlength="50" placeholder="Dein Name" required></div><label class="photo-button" for="profile-photo">Profilbild aufnehmen oder auswählen</label><input class="sr-only" id="profile-photo" type="file" accept="image/*" capture="user"><button class="primary-button" type="submit">Profil speichern</button></form><p class="form-note">Name und Bild werden ausschließlich auf diesem Gerät gespeichert.</p></section>
 
         <section class="settings-card"><div class="section-heading"><div><p class="section-label">KONTO</p><h2>Kontostand</h2></div><svg class="icon title-icon"><use href="#icon-wallet"/></svg></div><div class="large-value" id="settings-balance">0,00 €</div><form id="deposit-form" class="inline-form"><div class="price-input"><input id="deposit-amount" type="text" inputmode="decimal" placeholder="Betrag" required><span>€</span></div><button class="small-primary" type="submit">Einzahlen</button></form><p class="form-note">Getränkekosten werden automatisch vom Guthaben abgezogen.</p></section>
 
-        <section class="settings-card"><div class="section-heading"><div><p class="section-label">LAGER</p><h2>Bierbestand</h2></div><svg class="icon title-icon"><use href="#icon-stock"/></svg></div><div class="large-value"><span id="settings-stock">0</span> <small>Flaschen</small></div><form id="stock-form" class="inline-form"><input id="stock-amount" type="number" inputmode="numeric" min="1" placeholder="Anzahl" required><button class="small-primary" type="submit">Hinzufügen</button></form><p class="form-note">Gespeicherte Bier-Einträge reduzieren den Bestand automatisch.</p></section>
+        <section class="settings-card"><div class="section-heading"><div><p class="section-label">GLOBALES LAGER</p><h2>Bierbestand</h2></div><svg class="icon title-icon"><use href="#icon-stock"/></svg></div><div class="large-value"><span id="settings-stock">0</span> <small>Flaschen</small></div><form id="stock-form" class="inline-form" data-admin-only><input id="stock-amount" type="number" inputmode="numeric" min="1" placeholder="Anzahl" required><button class="small-primary" type="submit">Hinzufügen</button></form><p class="form-note">Alle verbundenen Benutzer buchen aus diesem gemeinsamen Bestand. Nur der Admin kann Bestand hinzufügen.</p></section>
 
-        <section class="settings-card"><div class="section-heading"><div><p class="section-label">GETRÄNKE & PREISE</p><h2>Auswahl verwalten</h2></div><svg class="icon title-icon"><use href="#icon-drink"/></svg></div><p class="form-note">Die hier hinterlegten Preise sind beim Erfassen fest vorgegeben.</p><div id="beverage-settings-list" class="settings-list"></div><form id="beverage-form" class="beverage-add-form"><input id="new-beverage" type="text" maxlength="30" placeholder="Getränkename" required><div class="price-input"><input id="new-beverage-price" type="text" inputmode="decimal" placeholder="Preis" required><span>€</span></div><button class="small-primary" type="submit"><svg class="icon"><use href="#icon-plus"/></svg> Hinzufügen</button></form></section>
+        <section class="settings-card"><div class="section-heading"><div><p class="section-label">GETRÄNKE & PREISE</p><h2>Auswahl verwalten</h2></div><svg class="icon title-icon"><use href="#icon-drink"/></svg></div><p class="form-note">Nur der Admin kann Preise oder Getränke ändern.</p><div id="beverage-settings-list" class="settings-list"></div><form id="beverage-form" class="beverage-add-form" data-admin-only><input id="new-beverage" type="text" maxlength="30" placeholder="Getränkename" required><div class="price-input"><input id="new-beverage-price" type="text" inputmode="decimal" placeholder="Preis" required><span>€</span></div><button class="small-primary" type="submit"><svg class="icon"><use href="#icon-plus"/></svg> Hinzufügen</button></form></section>
 
         <details class="install-help"><summary>App auf dem iPhone installieren</summary><p>In Safari auf <strong>Teilen</strong>, dann auf <strong>Zu Home-Bildschirm hinzufügen</strong> tippen.</p></details>
       </section>
@@ -99,6 +113,8 @@
     <button class="tab-button" type="button" data-tab="settings" aria-selected="false"><svg class="icon tab-icon"><use href="#icon-settings"/></svg><span>Einstellungen</span></button>
   </nav>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="supabase-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js" defer></script>
 </body>
 </html>
