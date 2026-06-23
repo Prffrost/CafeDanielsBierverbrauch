@@ -213,8 +213,12 @@ body[data-theme="dark"] .chat-message.is-own { color:#eafff0; background:#1f5c49
 .chat-message p { font-size:15px; line-height:1.32; white-space:pre-wrap; }
 .chat-message time { display:block; margin-top:3px; color:inherit; opacity:.55; font-size:10px; text-align:right; }
 .chat-media-preview { display:block; max-width:220px; max-height:220px; margin-bottom:6px; border-radius:10px; object-fit:cover; }
-.chat-actions { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin:10px -3px 0; }
+.chat-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; margin:10px -3px 0; }
 .chat-actions button,.chat-attach { display:flex; min-height:38px; align-items:center; justify-content:center; border:0; border-radius:999px; color:var(--blue); background:var(--surface); font-size:11px; font-weight:850; text-align:center; }
+.finance-list { display:grid; gap:8px; margin-top:12px; }
+.finance-row { display:grid; grid-template-columns:1fr auto; gap:3px 10px; padding:12px; border:1px solid var(--line); border-radius:14px; background:var(--field); }
+.finance-row strong { grid-row:span 2; align-self:center; }
+.finance-row span { color:var(--muted); font-size:11px; text-align:right; }
 .chat-form { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; margin:14px -3px 0; }
 .chat-form input { width:100%; min-height:48px; padding:0 16px; border:0; border-radius:999px; outline:0; color:var(--text); background:var(--surface); }
 .chat-form input:focus { border-color:var(--blue); }

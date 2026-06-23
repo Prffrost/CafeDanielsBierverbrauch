@@ -232,6 +232,35 @@ function chartGroups(periodEntries, range) {
   return groups;
 }
 
+function canDeleteEntry(entry) {
+  if (!entry) return false;
+  if (currentUser && isAdmin) return true;
+  return Date.now() - new Date(entry.createdAt).getTime() <= 5 * 60 * 1000;
+}
+
+function financeRangeEntries(period) {
+  const source = isAdmin ? adminEntries : entries;
+  const now = new Date();
+  const today = localDateString(now);
+  if (period === "day") return source.filter((entry) => entry.date === today);
+  const range = periodRange(period);
+  return source.filter((entry) => {
+    const date = new Date(`${entry.date}T12:00:00`);
+    return date >= range.start && date < range.end;
+  });
+}
+
+function financeSummary(period) {
+  return financeRangeEntries(period).reduce((summary, entry) => {
+    const income = entry.quantity * entry.unitPrice;
+    const expense = entry.quantity * (settings.purchasePrices?.[entry.beverage] || 0);
+    summary.quantity += entry.quantity;
+    summary.income += income;
+    summary.expense += expense;
+    return summary;
+  }, { quantity: 0, income: 0, expense: 0 });
+}
+
 function renderBeverageChoices() {
   const selected = beverageInput.value || "Bier";
   beverageInput.innerHTML = settings.beverages.map((name) => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join("");
@@ -540,7 +569,7 @@ function renderTeam() {
       const name = member?.profile?.display_name || (message.user_id === currentUser?.id ? settings.profileName : "") || "Unbekannt";
       const time = new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(message.created_at));
       const media = message.media_data && message.media_type?.startsWith("image/") ? `<img class="chat-media-preview" src="${message.media_data}" alt="Bild">` : message.media_data && message.media_type?.startsWith("video/") ? `<video class="chat-media-preview" src="${message.media_data}" controls playsinline></video>` : "";
-      const typeLabel = message.message_type === "status" ? "Status" : message.message_type === "voice-call" ? "Sprachanruf" : message.message_type === "video-call" ? "Videoanruf" : "";
+      const typeLabel = message.message_type === "status" ? "Status" : "";
       return `<article class="chat-message ${message.user_id === currentUser?.id ? "is-own" : ""} ${message.message_type !== "text" ? "is-event" : ""}"><strong>${escapeHTML(name)}</strong>${typeLabel ? `<em>${typeLabel}</em>` : ""}${media}<p>${escapeHTML(message.message)}</p><time>${time}</time></article>`;
     }).join("")
     : '<p class="days-empty">Noch keine Nachrichten. Schreib die erste Runde an.</p>';
@@ -632,6 +661,15 @@ function renderBeverageSettings() {
       return `<div class="settings-row"><span>${escapeHTML(name)}</span><strong>${stock} Stk.</strong></div>`;
     }).join("");
   }
+  const financeList = document.querySelector("#beverage-finance-list");
+  if (financeList) {
+    const periods = [["day", "Täglich"], ["week", "Wöchentlich"], ["month", "Monatlich"], ["year", "Jährlich"]];
+    financeList.innerHTML = periods.map(([period, label]) => {
+      const value = financeSummary(period);
+      const profit = value.income - value.expense;
+      return `<div class="finance-row"><strong>${label}</strong><span>${value.quantity} Getränke</span><span>Einnahmen ${currency(value.income)}</span><span>Ausgaben ${currency(value.expense)}</span><span>Gewinn ${currency(profit)}</span></div>`;
+    }).join("");
+  }
 }
 
 function updateCalculatedPrice() {
@@ -650,7 +688,7 @@ function render() {
   document.querySelector("#total-price").textContent = currency(dailyEntries.reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0));
   document.querySelector("#entry-count").textContent = dailyEntries.length + dailyGifts.length;
 
-  const entryRows = dailyEntries.map((entry) => `<article class="entry-row"><div class="entry-mug"><svg class="icon"><use href="#${entry.beverage === "Bier" ? "icon-beer" : "icon-drink"}"/></svg></div><div class="entry-info"><strong>${entry.quantity}× ${escapeHTML(entry.beverage)}</strong><span>${entry.giftToUser ? `ausgegeben an ${escapeHTML(memberName(entry.giftToUser))}` : `je ${currency(entry.unitPrice)}`}</span></div><div class="entry-sum"><strong>${currency(entry.quantity * entry.unitPrice)}</strong><button class="delete-button" type="button" data-delete-id="${entry.id}" aria-label="Eintrag löschen"><svg class="icon"><use href="#icon-trash"/></svg></button></div></article>`);
+  const entryRows = dailyEntries.map((entry) => `<article class="entry-row"><div class="entry-mug"><svg class="icon"><use href="#${entry.beverage === "Bier" ? "icon-beer" : "icon-drink"}"/></svg></div><div class="entry-info"><strong>${entry.quantity}× ${escapeHTML(entry.beverage)}</strong><span>${entry.giftToUser ? `ausgegeben an ${escapeHTML(memberName(entry.giftToUser))}` : `je ${currency(entry.unitPrice)}`}</span></div><div class="entry-sum"><strong>${currency(entry.quantity * entry.unitPrice)}</strong>${canDeleteEntry(entry) ? `<button class="delete-button" type="button" data-delete-id="${entry.id}" aria-label="Eintrag löschen"><svg class="icon"><use href="#icon-trash"/></svg></button>` : ""}</div></article>`);
   const giftRows = dailyGifts.map((gift) => `<article class="entry-row gift-entry"><div class="entry-mug"><svg class="icon"><use href="#icon-beer"/></svg></div><div class="entry-info"><strong>${gift.quantity}× Bier bekommen</strong><span>von ${escapeHTML(memberName(gift.fromUser))}</span></div><div class="entry-sum"><strong>+${currency(gift.amount)}</strong></div></article>`);
   list.innerHTML = entryRows.length || giftRows.length ? [...entryRows, ...giftRows].join("") : '<div class="empty-state"><svg class="icon"><use href="#icon-drink"/></svg><p>Noch keine Getränke für diesen Tag.</p></div>';
 
@@ -1068,20 +1106,6 @@ document.querySelector("#chat-status-button").addEventListener("click", async ()
   const result = await sendChatMessage(text.trim(), "status");
   if (result.error) return showToast(remoteErrorMessage(result.error));
   await loadRemoteState();
-});
-
-document.querySelector("#voice-call-button").addEventListener("click", async () => {
-  const result = await sendChatMessage("Sprachanruf gestartet", "voice-call");
-  if (result.error) return showToast(remoteErrorMessage(result.error));
-  await loadRemoteState();
-  showToast("Anruf-Einladung gesendet");
-});
-
-document.querySelector("#video-call-button").addEventListener("click", async () => {
-  const result = await sendChatMessage("Videoanruf gestartet", "video-call");
-  if (result.error) return showToast(remoteErrorMessage(result.error));
-  await loadRemoteState();
-  showToast("Videoanruf-Einladung gesendet");
 });
 
 document.querySelector("#chat-media").addEventListener("change", async (event) => {
