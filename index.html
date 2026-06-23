@@ -2,8 +2,8 @@
 <html lang="de">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#17120d">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#f7fbff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Daniels Getränke">
@@ -28,6 +28,8 @@
     <symbol id="icon-drink" viewBox="0 0 24 24"><path d="M6 3h12l-1 18H7L6 3Zm1 5h10M9 12h6"/></symbol>
     <symbol id="icon-qr" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2m4 0h-2m-4 4h6m-2-2v4"/></symbol>
     <symbol id="icon-theme" viewBox="0 0 24 24"><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/></symbol>
+    <symbol id="icon-users" viewBox="0 0 24 24"><path d="M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm8-1a3 3 0 1 0 0-6M3 21v-2a5 5 0 0 1 10 0v2m3-8a4.5 4.5 0 0 1 5 4.5V21"/></symbol>
+    <symbol id="icon-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4V5Zm4 5h8m-8 3h5"/></symbol>
   </svg>
 
   <section class="auth-screen" id="auth-screen" hidden>
@@ -96,6 +98,19 @@
         </section>
       </section>
 
+      <section class="tab-panel" data-tab-panel="team" aria-label="Gruppenübersicht und Chat" hidden>
+        <section class="team-card">
+          <div class="section-heading"><div><p class="section-label">GRUPPE</p><h2 id="team-heading">Mitglieder</h2></div><svg class="icon title-icon"><use href="#icon-users"/></svg></div>
+          <p class="form-note" id="team-group-name">Aktive Gruppe</p>
+          <div id="team-members-list" class="team-members"></div>
+        </section>
+        <section class="team-card chat-section">
+          <div class="section-heading"><div><p class="section-label">CHAT</p><h2>Gruppenchat</h2></div><svg class="icon title-icon"><use href="#icon-chat"/></svg></div>
+          <div id="chat-list" class="chat-list"></div>
+          <form id="chat-form" class="chat-form"><input id="chat-message" type="text" maxlength="500" placeholder="Nachricht schreiben…" autocomplete="off" required><button class="small-primary" type="submit">Senden</button></form>
+        </section>
+      </section>
+
       <section class="tab-panel" data-tab-panel="settings" aria-label="Einstellungen" hidden>
         <section class="settings-card" id="account-card"><div class="section-heading"><div><p class="section-label">VERBINDUNG</p><h2>Benutzerkonto</h2></div><span class="sync-dot" id="sync-dot"></span></div><p class="account-email" id="account-email">Lokal</p><p class="form-note" id="account-role">Keine Serververbindung</p><div class="field-group workspace-field"><label for="workspace-select">Aktiver Bereich</label><select id="workspace-select"></select></div><button class="danger-outline" id="delete-workspace-button" type="button" data-admin-only>Aktiven Bereich löschen</button><form id="workspace-form" class="inline-form"><input id="workspace-name" type="text" maxlength="60" placeholder="Name des neuen Bereichs" required><button class="small-primary" type="submit">Erstellen</button></form><p class="form-note">Wer einen neuen Bereich erstellt, wird dort automatisch Administrator.</p><button class="secondary-button" id="logout-button" type="button">Abmelden</button></section>
 
@@ -122,6 +137,7 @@
     <button class="tab-button is-active" type="button" data-tab="entry" aria-selected="true"><svg class="icon tab-icon"><use href="#icon-plus"/></svg><span>Erfassen</span></button>
     <button class="tab-button" type="button" data-tab="days" aria-selected="false"><svg class="icon tab-icon"><use href="#icon-days"/></svg><span>Tage</span></button>
     <button class="tab-button" type="button" data-tab="statistics" aria-selected="false"><svg class="icon tab-icon"><use href="#icon-chart"/></svg><span>Statistik</span></button>
+    <button class="tab-button" type="button" data-tab="team" aria-selected="false"><svg class="icon tab-icon"><use href="#icon-users"/></svg><span>Gruppe</span></button>
     <button class="tab-button" type="button" data-tab="settings" aria-selected="false"><svg class="icon tab-icon"><use href="#icon-settings"/></svg><span>Einstellungen</span></button>
   </nav>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

@@ -393,3 +393,66 @@ grant execute on function public.update_member_group(uuid, uuid, uuid) to authen
 grant execute on function public.delete_member(uuid, uuid) to authenticated;
 grant execute on function public.delete_org_group(uuid, uuid) to authenticated;
 grant execute on function public.delete_workspace(uuid) to authenticated;
+
+create table if not exists public.org_chat_messages (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  group_id uuid not null references public.app_groups(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  message text not null check(length(trim(message)) between 1 and 500),
+  created_at timestamptz not null default now()
+);
+
+alter table public.org_chat_messages enable row level security;
+
+drop policy if exists "chat_group_read" on public.org_chat_messages;
+
+create policy "chat_group_read"
+on public.org_chat_messages
+for select to authenticated
+using (
+  public.is_org_admin(organization_id)
+  or exists (
+    select 1
+    from public.memberships
+    where organization_id=org_chat_messages.organization_id
+      and user_id=auth.uid()
+      and group_id=org_chat_messages.group_id
+  )
+);
+
+create or replace function public.send_group_chat_message(p_org uuid, p_group uuid, p_message text)
+returns public.org_chat_messages
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_row public.org_chat_messages;
+begin
+  if not public.is_org_member(p_org) then
+    raise exception 'Kein Mitglied';
+  end if;
+  if not exists(select 1 from public.app_groups where id=p_group and organization_id=p_org) then
+    raise exception 'Gruppe nicht gefunden';
+  end if;
+  if not public.is_org_admin(p_org) and not exists(
+    select 1
+    from public.memberships
+    where organization_id=p_org and user_id=auth.uid() and group_id=p_group
+  ) then
+    raise exception 'Nicht in dieser Gruppe';
+  end if;
+  if length(trim(p_message)) < 1 or length(trim(p_message)) > 500 then
+    raise exception 'Nachricht ungültig';
+  end if;
+
+  insert into public.org_chat_messages(organization_id, group_id, user_id, message)
+  values(p_org, p_group, auth.uid(), trim(p_message))
+  returning * into v_row;
+
+  return v_row;
+end
+$$;
+
+grant execute on function public.send_group_chat_message(uuid, uuid, text) to authenticated;

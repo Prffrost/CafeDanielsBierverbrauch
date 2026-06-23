@@ -37,6 +37,7 @@ let adminEntries = [];
 let activeStatsUser = "me";
 let scannerStream = null;
 let scannerFrame = 0;
+let chatMessages = [];
 
 dateInput.value = localDateString(new Date());
 
@@ -48,7 +49,7 @@ function loadEntries() {
 }
 
 function loadSettings() {
-  const fallback = { beverages: [...DEFAULT_BEVERAGES], prices: { ...DEFAULT_PRICES }, purchasePrices: { ...DEFAULT_PURCHASE_PRICES }, deposits: 0, beerStockAdded: 0, profileName: "", profilePhoto: "", remoteInitialized: false, theme: "dark" };
+  const fallback = { beverages: [...DEFAULT_BEVERAGES], prices: { ...DEFAULT_PRICES }, purchasePrices: { ...DEFAULT_PURCHASE_PRICES }, deposits: 0, beerStockAdded: 0, profileName: "", profilePhoto: "", remoteInitialized: false, theme: "light" };
   try {
     const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
     if (!stored) return fallback;
@@ -65,7 +66,7 @@ function loadSettings() {
       profileName: typeof stored.profileName === "string" ? stored.profileName : "",
       profilePhoto: typeof stored.profilePhoto === "string" ? stored.profilePhoto : "",
       remoteInitialized: Boolean(stored.remoteInitialized),
-      theme: stored.theme === "light" ? "light" : "dark"
+      theme: stored.theme === "dark" ? "dark" : "light"
     };
   } catch { return fallback; }
 }
@@ -99,9 +100,17 @@ function escapeHTML(value) {
 }
 
 function applyTheme() {
-  document.body.dataset.theme = settings.theme || "dark";
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", settings.theme === "light" ? "#fff7ea" : "#17120d");
+  document.body.dataset.theme = settings.theme || "light";
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", settings.theme === "dark" ? "#071827" : "#f7fbff");
   document.querySelectorAll("[data-theme-choice]").forEach((button) => button.classList.toggle("is-active", button.dataset.themeChoice === settings.theme));
+}
+
+function activeMembership() {
+  return organizations.find((item) => item.organization_id === activeOrganizationId);
+}
+
+function activeGroupId() {
+  return activeMembership()?.group_id || organizationMembers.find((member) => member.user_id === currentUser?.id)?.group_id || null;
 }
 
 function totalSpent() { return entries.reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0); }
@@ -246,6 +255,12 @@ async function loadRemoteState() {
     const profileList = await supabaseClient.from("profiles").select("id,display_name").in("id", organizationMembers.map((item) => item.user_id));
     if (!profileList.error) organizationMembers = organizationMembers.map((item) => ({ ...item, profile: profileList.data.find((profile) => profile.id === item.user_id) }));
   }
+  chatMessages = [];
+  const groupId = activeGroupId();
+  if (groupId) {
+    const chatResult = await supabaseClient.from("org_chat_messages").select("id,user_id,group_id,message,created_at").eq("organization_id", activeOrganizationId).eq("group_id", groupId).order("created_at", { ascending: true }).limit(100);
+    if (!chatResult.error) chatMessages = chatResult.data;
+  }
   remoteBeverageIds = new Map(beverageResult.data.map((item) => [item.name, item.id]));
   settings.beverages = beverageResult.data.map((item) => item.name);
   settings.prices = Object.fromEntries(beverageResult.data.map((item) => [item.name, Number(item.price)]));
@@ -273,7 +288,7 @@ async function loadRemoteState() {
     if (stockResult.error) throw stockResult.error;
     remoteBeerStock = Number(stockResult.data) || 0;
   }
-  persistSettings(); persistEntries(); render(); renderOrganizationAdmin();
+  persistSettings(); persistEntries(); render(); renderOrganizationAdmin(); renderTeam();
 }
 
 async function syncPendingConsumptions() {
@@ -376,6 +391,32 @@ function renderOrganizationAdmin() {
   }).join("");
 }
 
+function renderTeam() {
+  const groupId = activeGroupId();
+  const group = organizationGroups.find((item) => item.id === groupId);
+  const members = groupId ? organizationMembers.filter((member) => member.group_id === groupId) : organizationMembers;
+  const groupName = group?.name || (currentUser ? "Keine Gruppe zugeordnet" : "Lokaler Modus");
+  document.querySelector("#team-group-name").textContent = groupName;
+  document.querySelector("#team-members-list").innerHTML = members.length
+    ? members.map((member) => {
+      const name = member.profile?.display_name || (member.user_id === currentUser?.id ? settings.profileName : "") || member.user_id;
+      const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
+      return `<article class="team-member-card"><div class="member-avatar">${escapeHTML(initials)}</div><div><strong>${escapeHTML(name)}</strong><span>${member.user_id === currentUser?.id ? "Du" : "Mitglied"}</span></div><span class="role-pill">${member.role === "admin" ? "Admin" : "User"}</span></article>`;
+    }).join("")
+    : '<p class="days-empty">Noch keine Mitglieder in dieser Gruppe.</p>';
+
+  document.querySelector("#chat-list").innerHTML = chatMessages.length
+    ? chatMessages.map((message) => {
+      const member = organizationMembers.find((item) => item.user_id === message.user_id);
+      const name = member?.profile?.display_name || (message.user_id === currentUser?.id ? settings.profileName : "") || "Unbekannt";
+      const time = new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(message.created_at));
+      return `<article class="chat-message ${message.user_id === currentUser?.id ? "is-own" : ""}"><strong>${escapeHTML(name)}</strong><p>${escapeHTML(message.message)}</p><time>${time}</time></article>`;
+    }).join("")
+    : '<p class="days-empty">Noch keine Nachrichten. Schreib die erste Runde an.</p>';
+  const chatList = document.querySelector("#chat-list");
+  chatList.scrollTop = chatList.scrollHeight;
+}
+
 function renderStatistics() {
   const range = periodRange(activePeriod);
   const statsSelect = document.querySelector("#stats-user-filter");
@@ -474,6 +515,7 @@ function render() {
   renderStatus();
   renderStatistics();
   renderBeverageSettings();
+  renderTeam();
 }
 
 function showToast(message) {
@@ -482,6 +524,14 @@ function showToast(message) {
   toast.classList.add("visible");
   toastTimer = setTimeout(() => toast.classList.remove("visible"), 1900);
 }
+
+let lastTouchEnd = 0;
+document.addEventListener("touchend", (event) => {
+  const now = Date.now();
+  if (now - lastTouchEnd <= 320) event.preventDefault();
+  lastTouchEnd = now;
+}, { passive: false });
+document.addEventListener("dblclick", (event) => event.preventDefault(), { passive: false });
 
 function handleQrPayload(payload) {
   const parts = String(payload || "").trim().split(":");
@@ -743,6 +793,22 @@ document.querySelector("#invite-form").addEventListener("submit", async (event) 
   if (window.QRCode) new window.QRCode(qr, { text: link, width: 180, height: 180 });
   document.querySelector("#mail-invite").href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Einladung zu Cafe Daniels")}&body=${encodeURIComponent(`Du wurdest eingeladen. Öffne diesen Link:\n\n${link}`)}`;
   showToast("Einladung erstellt");
+});
+
+document.querySelector("#chat-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!currentUser) return showToast("Bitte zuerst anmelden");
+  if (!activeOrganizationId) return showToast("Kein aktiver Bereich");
+  const input = document.querySelector("#chat-message");
+  const message = input.value.trim();
+  const groupId = activeGroupId();
+  if (!message) return;
+  if (!groupId) return showToast("Keine Gruppe zugeordnet");
+  const result = await supabaseClient.rpc("send_group_chat_message", { p_org: activeOrganizationId, p_group: groupId, p_message: message });
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  input.value = "";
+  await loadRemoteState();
+  setActiveTab("team");
 });
 
 document.querySelector("#copy-invite").addEventListener("click", async () => {
