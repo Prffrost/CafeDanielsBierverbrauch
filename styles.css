@@ -201,14 +201,20 @@ form { margin-top:22px; }
 .chat-section { min-height:460px; background:#e7f2ec; }
 body[data-theme="dark"] .chat-section { background:#0d241d; }
 .chat-list { display:flex; min-height:300px; max-height:520px; flex-direction:column; gap:7px; margin:17px -7px 0; overflow:auto; padding:10px 7px; }
+.chat-controls { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+.chat-controls select { min-height:44px; padding:0 12px; border:0; border-radius:14px; color:var(--text); background:var(--surface); }
 .chat-message { position:relative; align-self:flex-start; max-width:82%; padding:7px 10px 6px; border:0; border-radius:7px 15px 15px 15px; background:#fff; }
 body[data-theme="dark"] .chat-message { background:#15382d; }
 .chat-message.is-own { align-self:flex-end; color:#0b2741; background:#d9fdd3; border-radius:15px 7px 15px 15px; }
 body[data-theme="dark"] .chat-message.is-own { color:#eafff0; background:#1f5c49; }
 .chat-message strong { display:block; margin-bottom:2px; color:var(--blue); font-size:11px; }
 .chat-message.is-own strong { display:none; }
+.chat-message em { display:block; margin-bottom:3px; color:var(--blue); font-size:11px; font-style:normal; font-weight:850; }
 .chat-message p { font-size:15px; line-height:1.32; white-space:pre-wrap; }
 .chat-message time { display:block; margin-top:3px; color:inherit; opacity:.55; font-size:10px; text-align:right; }
+.chat-media-preview { display:block; max-width:220px; max-height:220px; margin-bottom:6px; border-radius:10px; object-fit:cover; }
+.chat-actions { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin:10px -3px 0; }
+.chat-actions button,.chat-attach { display:flex; min-height:38px; align-items:center; justify-content:center; border:0; border-radius:999px; color:var(--blue); background:var(--surface); font-size:11px; font-weight:850; text-align:center; }
 .chat-form { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; margin:14px -3px 0; }
 .chat-form input { width:100%; min-height:48px; padding:0 16px; border:0; border-radius:999px; outline:0; color:var(--text); background:var(--surface); }
 .chat-form input:focus { border-color:var(--blue); }

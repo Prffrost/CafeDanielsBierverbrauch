@@ -113,7 +113,9 @@
         </section>
         <section class="team-card chat-section">
           <div class="section-heading"><div><p class="section-label">CHAT</p><h2>Gruppenchat</h2></div><svg class="icon title-icon"><use href="#icon-chat"/></svg></div>
+          <div class="chat-controls"><select id="chat-mode"><option value="group">Gruppenchat</option><option value="direct">Direktchat</option></select><select id="chat-recipient" hidden></select></div>
           <div id="chat-list" class="chat-list"></div>
+          <div class="chat-actions"><label class="chat-attach" for="chat-media">Bild/Video</label><input class="sr-only" id="chat-media" type="file" accept="image/*,video/*"><button type="button" id="chat-status-button">Status</button><button type="button" id="voice-call-button">Sprachanruf</button><button type="button" id="video-call-button">Videoanruf</button></div>
           <form id="chat-form" class="chat-form"><input id="chat-message" type="text" maxlength="500" placeholder="Nachricht schreiben…" autocomplete="off" required><button class="small-primary" type="submit">Senden</button></form>
         </section>
       </section>

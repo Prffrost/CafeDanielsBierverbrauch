@@ -408,6 +408,12 @@ create table if not exists public.org_chat_messages (
 
 alter table public.org_chat_messages enable row level security;
 
+alter table public.org_chat_messages
+  add column if not exists recipient_id uuid references auth.users(id),
+  add column if not exists message_type text not null default 'text',
+  add column if not exists media_type text,
+  add column if not exists media_data text;
+
 drop policy if exists "chat_group_read" on public.org_chat_messages;
 
 create policy "chat_group_read"
@@ -422,7 +428,63 @@ using (
       and user_id=auth.uid()
       and group_id=org_chat_messages.group_id
   )
+  and (
+    recipient_id is null
+    or recipient_id=auth.uid()
+    or user_id=auth.uid()
+  )
 );
+
+create or replace function public.send_chat_message(
+  p_org uuid,
+  p_group uuid,
+  p_recipient uuid,
+  p_message text,
+  p_message_type text default 'text',
+  p_media_type text default null,
+  p_media_data text default null
+)
+returns public.org_chat_messages
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_row public.org_chat_messages;
+  v_type text := coalesce(nullif(trim(p_message_type),''),'text');
+begin
+  if not public.is_org_member(p_org) then
+    raise exception 'Kein Mitglied';
+  end if;
+  if not exists(select 1 from public.app_groups where id=p_group and organization_id=p_org) then
+    raise exception 'Gruppe nicht gefunden';
+  end if;
+  if not public.is_org_admin(p_org) and not exists(
+    select 1 from public.org_member_groups
+    where organization_id=p_org and user_id=auth.uid() and group_id=p_group
+  ) then
+    raise exception 'Nicht in dieser Gruppe';
+  end if;
+  if p_recipient is not null and not exists(
+    select 1 from public.org_member_groups
+    where organization_id=p_org and user_id=p_recipient and group_id=p_group
+  ) then
+    raise exception 'Empfänger ist nicht in dieser Gruppe';
+  end if;
+  if length(trim(coalesce(p_message,''))) < 1 and p_media_data is null then
+    raise exception 'Nachricht ungültig';
+  end if;
+  if length(coalesce(p_message,'')) > 500 or length(coalesce(p_media_data,'')) > 250000 then
+    raise exception 'Nachricht oder Medium zu groß';
+  end if;
+
+  insert into public.org_chat_messages(organization_id,group_id,user_id,recipient_id,message,message_type,media_type,media_data)
+  values(p_org,p_group,auth.uid(),p_recipient,trim(coalesce(p_message,'')),v_type,p_media_type,p_media_data)
+  returning * into v_row;
+
+  return v_row;
+end
+$$;
 
 create or replace function public.send_group_chat_message(p_org uuid, p_group uuid, p_message text)
 returns public.org_chat_messages
@@ -450,15 +512,15 @@ begin
     raise exception 'Nachricht ungültig';
   end if;
 
-  insert into public.org_chat_messages(organization_id, group_id, user_id, message)
-  values(p_org, p_group, auth.uid(), trim(p_message))
-  returning * into v_row;
+  select * into v_row
+  from public.send_chat_message(p_org,p_group,null,p_message,'text',null,null);
 
   return v_row;
 end
 $$;
 
 grant execute on function public.send_group_chat_message(uuid, uuid, text) to authenticated;
+grant execute on function public.send_chat_message(uuid, uuid, uuid, text, text, text, text) to authenticated;
 
 alter table public.org_consumptions
   add column if not exists gift_to_user uuid references auth.users(id);

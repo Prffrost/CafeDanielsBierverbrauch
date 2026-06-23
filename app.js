@@ -47,6 +47,9 @@ let memberGroupLinks = [];
 let activeSettingsSection = localStorage.getItem("cafe-daniels-settings-section") || "locations";
 let memberBalances = new Map();
 let receivedGifts = [];
+let chatMode = localStorage.getItem("cafe-daniels-chat-mode") || "group";
+let chatRecipientId = localStorage.getItem("cafe-daniels-chat-recipient") || "";
+let chatLiveTimer = 0;
 
 dateInput.value = localDateString(new Date());
 
@@ -284,7 +287,7 @@ async function loadRemoteState() {
   if (!currentUser || !activeOrganizationId) return;
   const membership = organizations.find((item) => item.organization_id === activeOrganizationId);
   isAdmin = membership?.role === "admin";
-  const [profileResult, firstBeverageResult, consumptionResult, depositResult, groupResult, memberResult] = await Promise.all([
+  let [profileResult, firstBeverageResult, consumptionResult, depositResult, groupResult, memberResult] = await Promise.all([
     supabaseClient.from("profiles").select("display_name").eq("id", currentUser.id).single(),
     supabaseClient.from("org_beverages").select("id,name,price,purchase_price,active").eq("organization_id", activeOrganizationId).eq("active", true).order("name"),
     supabaseClient.from("org_consumptions").select("id,client_id,quantity,unit_price,consumed_at,gift_to_user,org_beverages(id,name)").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id).order("consumed_at", { ascending: false }),
@@ -295,6 +298,12 @@ async function loadRemoteState() {
   const beverageResult = firstBeverageResult.error?.message?.includes("purchase_price")
     ? await supabaseClient.from("org_beverages").select("id,name,price,active").eq("organization_id", activeOrganizationId).eq("active", true).order("name")
     : firstBeverageResult;
+  if (consumptionResult.error?.message?.includes("gift_to_user")) {
+    consumptionResult = await supabaseClient.from("org_consumptions").select("id,client_id,quantity,unit_price,consumed_at,org_beverages(id,name)").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id).order("consumed_at", { ascending: false });
+  }
+  if (depositResult.error?.message?.includes("gift_from_user")) {
+    depositResult = await supabaseClient.from("org_deposits").select("amount").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id);
+  }
   const firstError = [profileResult, beverageResult, consumptionResult, depositResult, groupResult, memberResult].find((result) => result.error)?.error;
   if (firstError) throw firstError;
 
@@ -315,7 +324,16 @@ async function loadRemoteState() {
     localStorage.setItem("cafe-daniels-active-group", groupId);
   }
   if (groupId) {
-    const chatResult = await supabaseClient.from("org_chat_messages").select("id,user_id,group_id,message,created_at").eq("organization_id", activeOrganizationId).eq("group_id", groupId).order("created_at", { ascending: false }).limit(CHAT_LIMIT);
+    let chatQuery = supabaseClient.from("org_chat_messages").select("id,user_id,recipient_id,group_id,message,message_type,media_type,media_data,created_at").eq("organization_id", activeOrganizationId).eq("group_id", groupId).order("created_at", { ascending: false }).limit(CHAT_LIMIT);
+    if (chatMode === "direct" && chatRecipientId) {
+      chatQuery = chatQuery.or(`and(user_id.eq.${currentUser.id},recipient_id.eq.${chatRecipientId}),and(user_id.eq.${chatRecipientId},recipient_id.eq.${currentUser.id})`);
+    } else {
+      chatQuery = chatQuery.is("recipient_id", null);
+    }
+    let chatResult = await chatQuery;
+    if (chatResult.error?.message?.includes("recipient_id") || chatResult.error?.message?.includes("message_type")) {
+      chatResult = await supabaseClient.from("org_chat_messages").select("id,user_id,group_id,message,created_at").eq("organization_id", activeOrganizationId).eq("group_id", groupId).order("created_at", { ascending: false }).limit(CHAT_LIMIT);
+    }
     if (!chatResult.error) chatMessages = chatResult.data.reverse();
   }
   remoteBeverageIds = new Map(beverageResult.data.map((item) => [item.name, item.id]));
@@ -337,7 +355,10 @@ async function loadRemoteState() {
   memberBalances = balanceResult.error ? new Map() : new Map(balanceResult.data.map((item) => [item.user_id, Number(item.balance) || 0]));
   adminEntries = [];
   if (isAdmin) {
-    const adminConsumption = await supabaseClient.from("org_consumptions").select("id,client_id,user_id,quantity,unit_price,consumed_at,gift_to_user,org_beverages(id,name)").eq("organization_id", activeOrganizationId).order("consumed_at", { ascending: false });
+    let adminConsumption = await supabaseClient.from("org_consumptions").select("id,client_id,user_id,quantity,unit_price,consumed_at,gift_to_user,org_beverages(id,name)").eq("organization_id", activeOrganizationId).order("consumed_at", { ascending: false });
+    if (adminConsumption.error?.message?.includes("gift_to_user")) {
+      adminConsumption = await supabaseClient.from("org_consumptions").select("id,client_id,user_id,quantity,unit_price,consumed_at,org_beverages(id,name)").eq("organization_id", activeOrganizationId).order("consumed_at", { ascending: false });
+    }
     if (!adminConsumption.error) {
       adminEntries = adminConsumption.data.map((item) => ({ id: item.client_id, remoteId: item.id, remote: true, userId: item.user_id, date: item.consumed_at.slice(0, 10), beverage: item.org_beverages.name, quantity: item.quantity, unitPrice: Number(item.unit_price), createdAt: item.consumed_at, giftToUser: item.gift_to_user || "" }));
     }
@@ -422,6 +443,17 @@ async function initializeRemote() {
     document.querySelector("#auth-screen").hidden = Boolean(currentUser);
     if (currentUser) { try { await loadOrganizations(); await loadRemoteState(); await syncPendingConsumptions(); } catch (error) { remoteStatusMessage = remoteErrorMessage(error); showToast(remoteStatusMessage); render(); } }
   });
+  startChatLiveUpdates();
+}
+
+function startChatLiveUpdates() {
+  if (chatLiveTimer) clearInterval(chatLiveTimer);
+  chatLiveTimer = setInterval(async () => {
+    if (!currentUser || !activeOrganizationId || document.hidden) return;
+    const activePanel = document.querySelector('[data-tab-panel="team"]');
+    if (activePanel?.hidden) return;
+    try { await loadRemoteState(); } catch { /* live update stays quiet */ }
+  }, 4500);
 }
 
 function renderStatus() {
@@ -491,13 +523,25 @@ function renderTeam() {
     ? possibleReceivers.map((member) => `<option value="${member.user_id}">${escapeHTML(member.profile?.display_name || member.user_id)}</option>`).join("")
     : '<option value="">Kein anderer Benutzer</option>';
   giveSelect.disabled = !possibleReceivers.length;
+  const chatModeSelect = document.querySelector("#chat-mode");
+  const chatRecipientSelect = document.querySelector("#chat-recipient");
+  chatModeSelect.value = chatMode;
+  chatRecipientSelect.hidden = chatMode !== "direct";
+  chatRecipientSelect.innerHTML = possibleReceivers.length
+    ? possibleReceivers.map((member) => `<option value="${member.user_id}">${escapeHTML(member.profile?.display_name || member.user_id)}</option>`).join("")
+    : '<option value="">Kein anderer Benutzer</option>';
+  if (!possibleReceivers.some((member) => member.user_id === chatRecipientId)) chatRecipientId = possibleReceivers[0]?.user_id || "";
+  chatRecipientSelect.value = chatRecipientId;
+  chatRecipientSelect.disabled = chatMode !== "direct" || !possibleReceivers.length;
 
   document.querySelector("#chat-list").innerHTML = chatMessages.length
     ? chatMessages.map((message) => {
       const member = organizationMembers.find((item) => item.user_id === message.user_id);
       const name = member?.profile?.display_name || (message.user_id === currentUser?.id ? settings.profileName : "") || "Unbekannt";
       const time = new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(message.created_at));
-      return `<article class="chat-message ${message.user_id === currentUser?.id ? "is-own" : ""}"><strong>${escapeHTML(name)}</strong><p>${escapeHTML(message.message)}</p><time>${time}</time></article>`;
+      const media = message.media_data && message.media_type?.startsWith("image/") ? `<img class="chat-media-preview" src="${message.media_data}" alt="Bild">` : message.media_data && message.media_type?.startsWith("video/") ? `<video class="chat-media-preview" src="${message.media_data}" controls playsinline></video>` : "";
+      const typeLabel = message.message_type === "status" ? "Status" : message.message_type === "voice-call" ? "Sprachanruf" : message.message_type === "video-call" ? "Videoanruf" : "";
+      return `<article class="chat-message ${message.user_id === currentUser?.id ? "is-own" : ""} ${message.message_type !== "text" ? "is-event" : ""}"><strong>${escapeHTML(name)}</strong>${typeLabel ? `<em>${typeLabel}</em>` : ""}${media}<p>${escapeHTML(message.message)}</p><time>${time}</time></article>`;
     }).join("")
     : '<p class="days-empty">Noch keine Nachrichten. Schreib die erste Runde an.</p>';
   const chatList = document.querySelector("#chat-list");
@@ -986,11 +1030,72 @@ document.querySelector("#chat-form").addEventListener("submit", async (event) =>
   const groupId = activeGroupId();
   if (!message) return;
   if (!groupId) return showToast("Keine Gruppe zugeordnet");
-  const result = await supabaseClient.rpc("send_group_chat_message", { p_org: activeOrganizationId, p_group: groupId, p_message: message });
+  const result = await sendChatMessage(message, "text");
   if (result.error) return showToast(remoteErrorMessage(result.error));
   input.value = "";
   await loadRemoteState();
   setActiveTab("team");
+});
+
+async function sendChatMessage(message, type = "text", mediaType = null, mediaData = null) {
+  const groupId = activeGroupId();
+  const recipient = chatMode === "direct" ? chatRecipientId : null;
+  if (chatMode === "direct" && !recipient) return { error: { message: "Bitte Empfänger auswählen" } };
+  const result = await supabaseClient.rpc("send_chat_message", { p_org: activeOrganizationId, p_group: groupId, p_recipient: recipient, p_message: message, p_message_type: type, p_media_type: mediaType, p_media_data: mediaData });
+  if (result.error && type === "text" && !recipient && !mediaData && ((result.error.message || "").includes("send_chat_message") || (result.error.message || "").includes("schema cache"))) {
+    return supabaseClient.rpc("send_group_chat_message", { p_org: activeOrganizationId, p_group: groupId, p_message: message });
+  }
+  return result;
+}
+
+document.querySelector("#chat-mode").addEventListener("change", async (event) => {
+  chatMode = event.target.value;
+  localStorage.setItem("cafe-daniels-chat-mode", chatMode);
+  await loadRemoteState();
+  setActiveTab("team");
+});
+
+document.querySelector("#chat-recipient").addEventListener("change", async (event) => {
+  chatRecipientId = event.target.value;
+  localStorage.setItem("cafe-daniels-chat-recipient", chatRecipientId);
+  await loadRemoteState();
+  setActiveTab("team");
+});
+
+document.querySelector("#chat-status-button").addEventListener("click", async () => {
+  const text = prompt("Status-Meldung eingeben:");
+  if (!text?.trim()) return;
+  const result = await sendChatMessage(text.trim(), "status");
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  await loadRemoteState();
+});
+
+document.querySelector("#voice-call-button").addEventListener("click", async () => {
+  const result = await sendChatMessage("Sprachanruf gestartet", "voice-call");
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  await loadRemoteState();
+  showToast("Anruf-Einladung gesendet");
+});
+
+document.querySelector("#video-call-button").addEventListener("click", async () => {
+  const result = await sendChatMessage("Videoanruf gestartet", "video-call");
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  await loadRemoteState();
+  showToast("Videoanruf-Einladung gesendet");
+});
+
+document.querySelector("#chat-media").addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (file.size > 180000) { event.target.value = ""; return showToast("Datei ist zu groß. Bitte kleines Bild/kurzes Video wählen."); }
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const result = await sendChatMessage(file.type.startsWith("video/") ? "Video" : "Bild", "media", file.type, reader.result);
+    event.target.value = "";
+    if (result.error) return showToast(remoteErrorMessage(result.error));
+    await loadRemoteState();
+  };
+  reader.readAsDataURL(file);
 });
 
 document.querySelector("#give-beer-decrease").addEventListener("click", () => {
