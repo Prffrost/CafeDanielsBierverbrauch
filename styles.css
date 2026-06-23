@@ -164,6 +164,8 @@ form { margin-top:22px; }
 .members-title { margin-top:25px; }
 .member-row { display:grid; grid-template-columns:minmax(0,1fr) 125px; align-items:center; gap:8px; padding:10px 0; border-bottom:1px solid var(--line); }
 .member-row span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.member-row span strong,.member-row span small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.member-row span small { margin-top:3px; color:var(--blue); font-size:11px; font-weight:850; }
 .member-row { grid-template-columns:minmax(0,1fr) 112px 36px; }
 .member-row select { min-height:38px; border:1px solid var(--line); border-radius:10px; color:var(--text); background:var(--field); }
 .multi-member-row { grid-template-columns:minmax(0,1fr) minmax(140px,1.4fr) 36px; align-items:start; }
@@ -178,6 +180,8 @@ form { margin-top:22px; }
 .segmented-control button { min-height:43px; border:0; border-radius:11px; color:var(--muted); background:transparent; font-weight:800; }
 .segmented-control button.is-active { color:#fff; background:var(--blue); }
 .scanner-card { margin-top:15px; padding:14px; border:1px solid var(--line); border-radius:17px; background:var(--field); }
+.gift-entry .entry-mug { color:#fff; background:var(--blue); }
+.gift-entry .entry-sum strong { color:var(--blue); }
 .scanner-card video { width:100%; max-height:280px; border-radius:14px; background:#000; object-fit:cover; }
 .admin-stat-filter { margin-top:16px; }
 .user-stat-row { display:grid; grid-template-columns:1fr auto; gap:12px; padding:13px 2px; border-bottom:1px solid var(--line); }

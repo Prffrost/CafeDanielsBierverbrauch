@@ -75,6 +75,7 @@ create table if not exists public.org_consumptions (
   quantity integer not null check(quantity>0),
   unit_price numeric(10,2) not null check(unit_price>0),
   consumed_at timestamptz not null,
+  gift_to_user uuid references auth.users(id),
   created_at timestamptz not null default now()
 );
 
@@ -84,6 +85,10 @@ create table if not exists public.org_deposits (
   organization_id uuid not null references public.organizations(id) on delete cascade,
   user_id uuid not null references auth.users(id),
   amount numeric(10,2) not null check(amount>0),
+  gift_from_user uuid references auth.users(id),
+  gift_beverage_id uuid references public.org_beverages(id),
+  gift_quantity integer,
+  note text,
   created_at timestamptz not null default now()
 );
 
@@ -348,6 +353,9 @@ as $$ declare v_row org_chat_messages; begin
   return v_row;
 end $$;
 
+alter table public.org_consumptions add column if not exists gift_to_user uuid references auth.users(id);
+alter table public.org_deposits add column if not exists gift_from_user uuid references auth.users(id), add column if not exists gift_beverage_id uuid references public.org_beverages(id), add column if not exists gift_quantity integer, add column if not exists note text;
+
 create or replace function public.give_beer_to_user(p_client text,p_org uuid,p_to_user uuid,p_beverage uuid,p_quantity integer,p_at timestamptz)
 returns public.org_consumptions language plpgsql security definer set search_path=public
 as $$ declare v_bev org_beverages; v_sender_group uuid; v_receiver_group uuid; v_balance numeric; v_row org_consumptions; begin
@@ -362,12 +370,22 @@ as $$ declare v_bev org_beverages; v_sender_group uuid; v_receiver_group uuid; v
          coalesce((select sum(quantity*unit_price) from org_consumptions where organization_id=p_org and user_id=auth.uid()),0) into v_balance;
   if v_balance<p_quantity*v_bev.price then raise exception 'Guthaben reicht nicht aus'; end if;
   if get_org_stock(p_org,p_beverage)<p_quantity then raise exception 'Lagerbestand reicht nicht aus'; end if;
-  insert into org_consumptions(client_id,organization_id,user_id,beverage_id,quantity,unit_price,consumed_at)
-  values(p_client,p_org,auth.uid(),p_beverage,p_quantity,v_bev.price,p_at) returning * into v_row;
-  insert into org_deposits(client_id,organization_id,user_id,amount)
-  values(p_client || '-gift',p_org,p_to_user,p_quantity*v_bev.price);
+  insert into org_consumptions(client_id,organization_id,user_id,beverage_id,quantity,unit_price,consumed_at,gift_to_user)
+  values(p_client,p_org,auth.uid(),p_beverage,p_quantity,v_bev.price,p_at,p_to_user) returning * into v_row;
+  insert into org_deposits(client_id,organization_id,user_id,amount,gift_from_user,gift_beverage_id,gift_quantity,note)
+  values(p_client || '-gift',p_org,p_to_user,p_quantity*v_bev.price,auth.uid(),p_beverage,p_quantity,'Bier erhalten');
   return v_row;
 end $$;
+
+create or replace function public.get_member_balances(p_org uuid)
+returns table(user_id uuid,balance numeric) language sql security definer set search_path=public
+as $$
+  select m.user_id,
+         coalesce((select sum(d.amount) from org_deposits d where d.organization_id=p_org and d.user_id=m.user_id),0)
+         - coalesce((select sum(c.quantity*c.unit_price) from org_consumptions c where c.organization_id=p_org and c.user_id=m.user_id),0) as balance
+  from memberships m
+  where m.organization_id=p_org and is_org_member(p_org);
+$$;
 
 create or replace function public.set_member_groups(p_org uuid,p_user uuid,p_groups uuid[])
 returns void language plpgsql security definer set search_path=public
@@ -427,4 +445,4 @@ create policy "org_deposit_insert" on org_deposits for insert to authenticated w
 create policy "chat_group_read" on org_chat_messages for select to authenticated using(is_org_admin(organization_id) or exists(select 1 from org_member_groups where organization_id=org_chat_messages.organization_id and user_id=auth.uid() and group_id=org_chat_messages.group_id));
 create policy "member_groups_read" on org_member_groups for select to authenticated using(is_org_member(organization_id));
 
-grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz),add_org_deposit(text,uuid,numeric),admin_add_user_deposit(text,uuid,uuid,numeric),add_member_by_email(uuid,text,uuid),add_org_stock(uuid,uuid,integer,text),upsert_org_beverage(uuid,text,numeric,numeric),update_org_beverage_price(uuid,uuid,numeric),update_org_beverage_purchase_price(uuid,uuid,numeric),deactivate_org_beverage(uuid,uuid),create_org_group(uuid,text),update_member_group(uuid,uuid,uuid),delete_member(uuid,uuid),delete_org_group(uuid,uuid),delete_workspace(uuid),reset_workspace_values(uuid),send_group_chat_message(uuid,uuid,text),give_beer_to_user(text,uuid,uuid,uuid,integer,timestamptz),set_member_groups(uuid,uuid,uuid[]),set_member_admin_role(uuid,uuid,boolean),delete_org_consumption(uuid,uuid) to authenticated;
+grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),get_member_balances(uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz),add_org_deposit(text,uuid,numeric),admin_add_user_deposit(text,uuid,uuid,numeric),add_member_by_email(uuid,text,uuid),add_org_stock(uuid,uuid,integer,text),upsert_org_beverage(uuid,text,numeric,numeric),update_org_beverage_price(uuid,uuid,numeric),update_org_beverage_purchase_price(uuid,uuid,numeric),deactivate_org_beverage(uuid,uuid),create_org_group(uuid,text),update_member_group(uuid,uuid,uuid),delete_member(uuid,uuid),delete_org_group(uuid,uuid),delete_workspace(uuid),reset_workspace_values(uuid),send_group_chat_message(uuid,uuid,text),give_beer_to_user(text,uuid,uuid,uuid,integer,timestamptz),set_member_groups(uuid,uuid,uuid[]),set_member_admin_role(uuid,uuid,boolean),delete_org_consumption(uuid,uuid) to authenticated;

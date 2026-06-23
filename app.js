@@ -45,6 +45,8 @@ const CHAT_LIMIT = 10;
 let selectedGroupId = localStorage.getItem("cafe-daniels-active-group") || "";
 let memberGroupLinks = [];
 let activeSettingsSection = localStorage.getItem("cafe-daniels-settings-section") || "locations";
+let memberBalances = new Map();
+let receivedGifts = [];
 
 dateInput.value = localDateString(new Date());
 
@@ -126,6 +128,11 @@ function memberGroupIds(userId) {
   const linked = memberGroupLinks.filter((link) => link.user_id === userId).map((link) => link.group_id);
   const member = organizationMembers.find((item) => item.user_id === userId);
   return [...new Set([...linked, member?.group_id].filter(Boolean))];
+}
+
+function memberName(userId) {
+  const member = organizationMembers.find((item) => item.user_id === userId);
+  return member?.profile?.display_name || (userId === currentUser?.id ? settings.profileName : "") || userId || "Unbekannt";
 }
 
 function availableGroupsForCurrentUser() {
@@ -280,8 +287,8 @@ async function loadRemoteState() {
   const [profileResult, firstBeverageResult, consumptionResult, depositResult, groupResult, memberResult] = await Promise.all([
     supabaseClient.from("profiles").select("display_name").eq("id", currentUser.id).single(),
     supabaseClient.from("org_beverages").select("id,name,price,purchase_price,active").eq("organization_id", activeOrganizationId).eq("active", true).order("name"),
-    supabaseClient.from("org_consumptions").select("id,client_id,quantity,unit_price,consumed_at,org_beverages(id,name)").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id).order("consumed_at", { ascending: false }),
-    supabaseClient.from("org_deposits").select("amount").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id),
+    supabaseClient.from("org_consumptions").select("id,client_id,quantity,unit_price,consumed_at,gift_to_user,org_beverages(id,name)").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id).order("consumed_at", { ascending: false }),
+    supabaseClient.from("org_deposits").select("amount,gift_from_user,gift_quantity,note,created_at").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id),
     supabaseClient.from("app_groups").select("id,name").eq("organization_id", activeOrganizationId).order("name"),
     supabaseClient.from("memberships").select("user_id,group_id,role").eq("organization_id", activeOrganizationId)
   ]);
@@ -322,14 +329,17 @@ async function loadRemoteState() {
     legacy = entries.filter((entry) => !entry.pending && !entry.remote).map((entry) => ({ ...entry, legacy: true }));
     settings.remoteInitialized = true;
   }
-  const remoteEntries = consumptionResult.data.map((item) => ({ id: item.client_id, remoteId: item.id, remote: true, date: item.consumed_at.slice(0, 10), beverage: item.org_beverages.name, quantity: item.quantity, unitPrice: Number(item.unit_price), createdAt: item.consumed_at }));
+  const remoteEntries = consumptionResult.data.map((item) => ({ id: item.client_id, remoteId: item.id, remote: true, date: item.consumed_at.slice(0, 10), beverage: item.org_beverages.name, quantity: item.quantity, unitPrice: Number(item.unit_price), createdAt: item.consumed_at, giftToUser: item.gift_to_user || "" }));
+  receivedGifts = depositResult.data.filter((item) => item.gift_from_user).map((item) => ({ id: `${item.created_at}-${item.gift_from_user}`, date: item.created_at.slice(0, 10), beverage: "Bier", quantity: Number(item.gift_quantity) || 1, amount: Number(item.amount), createdAt: item.created_at, fromUser: item.gift_from_user }));
   entries = [...pending, ...remoteEntries, ...legacy];
   remoteBalance = depositResult.data.reduce((sum, item) => sum + Number(item.amount), 0) - remoteEntries.reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0);
+  const balanceResult = await supabaseClient.rpc("get_member_balances", { p_org: activeOrganizationId });
+  memberBalances = balanceResult.error ? new Map() : new Map(balanceResult.data.map((item) => [item.user_id, Number(item.balance) || 0]));
   adminEntries = [];
   if (isAdmin) {
-    const adminConsumption = await supabaseClient.from("org_consumptions").select("id,client_id,user_id,quantity,unit_price,consumed_at,org_beverages(id,name)").eq("organization_id", activeOrganizationId).order("consumed_at", { ascending: false });
+    const adminConsumption = await supabaseClient.from("org_consumptions").select("id,client_id,user_id,quantity,unit_price,consumed_at,gift_to_user,org_beverages(id,name)").eq("organization_id", activeOrganizationId).order("consumed_at", { ascending: false });
     if (!adminConsumption.error) {
-      adminEntries = adminConsumption.data.map((item) => ({ id: item.client_id, remoteId: item.id, remote: true, userId: item.user_id, date: item.consumed_at.slice(0, 10), beverage: item.org_beverages.name, quantity: item.quantity, unitPrice: Number(item.unit_price), createdAt: item.consumed_at }));
+      adminEntries = adminConsumption.data.map((item) => ({ id: item.client_id, remoteId: item.id, remote: true, userId: item.user_id, date: item.consumed_at.slice(0, 10), beverage: item.org_beverages.name, quantity: item.quantity, unitPrice: Number(item.unit_price), createdAt: item.consumed_at, giftToUser: item.gift_to_user || "" }));
     }
   }
   const beerId = remoteBeverageIds.get("Bier");
@@ -453,7 +463,7 @@ function renderOrganizationAdmin() {
   document.querySelector("#members-list").innerHTML = organizationMembers.map((member) => {
     const isSelf = member.user_id === currentUser?.id;
     const groups = memberGroupIds(member.user_id);
-    return `<div class="member-row multi-member-row"><span>${escapeHTML(member.profile?.display_name || member.user_id)}</span><div class="member-group-checks"><label class="admin-check"><input type="checkbox" data-member-admin="${member.user_id}" ${member.role === "admin" ? "checked" : ""} ${isSelf ? "disabled" : ""}>Admin</label>${organizationGroups.map((group) => `<label><input type="checkbox" data-member-group-user="${member.user_id}" value="${group.id}" ${groups.includes(group.id) ? "checked" : ""}>${escapeHTML(group.name)}</label>`).join("")}</div><button type="button" data-delete-member="${member.user_id}" ${isSelf ? "disabled" : ""} aria-label="Mitglied entfernen"><svg class="icon"><use href="#icon-trash"/></svg></button></div>`;
+    return `<div class="member-row multi-member-row"><span><strong>${escapeHTML(member.profile?.display_name || member.user_id)}</strong><small>${currency(memberBalances.get(member.user_id) || 0)}</small></span><div class="member-group-checks"><label class="admin-check"><input type="checkbox" data-member-admin="${member.user_id}" ${member.role === "admin" ? "checked" : ""} ${isSelf ? "disabled" : ""}>Admin</label>${organizationGroups.map((group) => `<label><input type="checkbox" data-member-group-user="${member.user_id}" value="${group.id}" ${groups.includes(group.id) ? "checked" : ""}>${escapeHTML(group.name)}</label>`).join("")}</div><button type="button" data-delete-member="${member.user_id}" ${isSelf ? "disabled" : ""} aria-label="Mitglied entfernen"><svg class="icon"><use href="#icon-trash"/></svg></button></div>`;
   }).join("");
 }
 
@@ -472,7 +482,7 @@ function renderTeam() {
     ? members.map((member) => {
       const name = member.profile?.display_name || (member.user_id === currentUser?.id ? settings.profileName : "") || member.user_id;
       const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
-      return `<article class="team-member-card"><div class="member-avatar">${escapeHTML(initials)}</div><div><strong>${escapeHTML(name)}</strong><span>${member.user_id === currentUser?.id ? "Du" : "Mitglied"}</span></div><span class="role-pill">${member.role === "admin" ? "Admin" : "User"}</span></article>`;
+      return `<article class="team-member-card"><div class="member-avatar">${escapeHTML(initials)}</div><div><strong>${escapeHTML(name)}</strong><span>${member.user_id === currentUser?.id ? "Du" : "Mitglied"} · Guthaben ${currency(memberBalances.get(member.user_id) || 0)}</span></div><span class="role-pill">${member.role === "admin" ? "Admin" : "User"}</span></article>`;
     }).join("")
     : '<p class="days-empty">Noch keine Mitglieder in dieser Gruppe.</p>';
   const giveSelect = document.querySelector("#give-beer-user");
@@ -591,11 +601,14 @@ function render() {
   applyTheme();
   friendlyDate.textContent = formattedDate(dateInput.value);
   const dailyEntries = entries.filter((entry) => entry.date === dateInput.value).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const dailyGifts = receivedGifts.filter((entry) => entry.date === dateInput.value).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   document.querySelector("#total-quantity").textContent = dailyEntries.reduce((sum, entry) => sum + entry.quantity, 0);
   document.querySelector("#total-price").textContent = currency(dailyEntries.reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0));
-  document.querySelector("#entry-count").textContent = dailyEntries.length;
+  document.querySelector("#entry-count").textContent = dailyEntries.length + dailyGifts.length;
 
-  list.innerHTML = dailyEntries.length ? dailyEntries.map((entry) => `<article class="entry-row"><div class="entry-mug"><svg class="icon"><use href="#${entry.beverage === "Bier" ? "icon-beer" : "icon-drink"}"/></svg></div><div class="entry-info"><strong>${entry.quantity}× ${escapeHTML(entry.beverage)}</strong><span>je ${currency(entry.unitPrice)}</span></div><div class="entry-sum"><strong>${currency(entry.quantity * entry.unitPrice)}</strong><button class="delete-button" type="button" data-delete-id="${entry.id}" aria-label="Eintrag löschen"><svg class="icon"><use href="#icon-trash"/></svg></button></div></article>`).join("") : '<div class="empty-state"><svg class="icon"><use href="#icon-drink"/></svg><p>Noch keine Getränke für diesen Tag.</p></div>';
+  const entryRows = dailyEntries.map((entry) => `<article class="entry-row"><div class="entry-mug"><svg class="icon"><use href="#${entry.beverage === "Bier" ? "icon-beer" : "icon-drink"}"/></svg></div><div class="entry-info"><strong>${entry.quantity}× ${escapeHTML(entry.beverage)}</strong><span>${entry.giftToUser ? `ausgegeben an ${escapeHTML(memberName(entry.giftToUser))}` : `je ${currency(entry.unitPrice)}`}</span></div><div class="entry-sum"><strong>${currency(entry.quantity * entry.unitPrice)}</strong><button class="delete-button" type="button" data-delete-id="${entry.id}" aria-label="Eintrag löschen"><svg class="icon"><use href="#icon-trash"/></svg></button></div></article>`);
+  const giftRows = dailyGifts.map((gift) => `<article class="entry-row gift-entry"><div class="entry-mug"><svg class="icon"><use href="#icon-beer"/></svg></div><div class="entry-info"><strong>${gift.quantity}× Bier bekommen</strong><span>von ${escapeHTML(memberName(gift.fromUser))}</span></div><div class="entry-sum"><strong>+${currency(gift.amount)}</strong></div></article>`);
+  list.innerHTML = entryRows.length || giftRows.length ? [...entryRows, ...giftRows].join("") : '<div class="empty-state"><svg class="icon"><use href="#icon-drink"/></svg><p>Noch keine Getränke für diesen Tag.</p></div>';
 
   renderBeverageChoices();
   updateCalculatedPrice();

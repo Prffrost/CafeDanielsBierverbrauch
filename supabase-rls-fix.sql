@@ -460,6 +460,15 @@ $$;
 
 grant execute on function public.send_group_chat_message(uuid, uuid, text) to authenticated;
 
+alter table public.org_consumptions
+  add column if not exists gift_to_user uuid references auth.users(id);
+
+alter table public.org_deposits
+  add column if not exists gift_from_user uuid references auth.users(id),
+  add column if not exists gift_beverage_id uuid references public.org_beverages(id),
+  add column if not exists gift_quantity integer,
+  add column if not exists note text;
+
 create or replace function public.give_beer_to_user(
   p_client text,
   p_org uuid,
@@ -521,18 +530,34 @@ begin
     raise exception 'Lagerbestand reicht nicht aus';
   end if;
 
-  insert into public.org_consumptions(client_id,organization_id,user_id,beverage_id,quantity,unit_price,consumed_at)
-  values(p_client,p_org,auth.uid(),p_beverage,p_quantity,v_bev.price,p_at)
+  insert into public.org_consumptions(client_id,organization_id,user_id,beverage_id,quantity,unit_price,consumed_at,gift_to_user)
+  values(p_client,p_org,auth.uid(),p_beverage,p_quantity,v_bev.price,p_at,p_to_user)
   returning * into v_row;
 
-  insert into public.org_deposits(client_id,organization_id,user_id,amount)
-  values(p_client || '-gift',p_org,p_to_user,p_quantity*v_bev.price);
+  insert into public.org_deposits(client_id,organization_id,user_id,amount,gift_from_user,gift_beverage_id,gift_quantity,note)
+  values(p_client || '-gift',p_org,p_to_user,p_quantity*v_bev.price,auth.uid(),p_beverage,p_quantity,'Bier erhalten');
 
   return v_row;
 end
 $$;
 
 grant execute on function public.give_beer_to_user(text, uuid, uuid, uuid, integer, timestamptz) to authenticated;
+
+create or replace function public.get_member_balances(p_org uuid)
+returns table(user_id uuid, balance numeric)
+language sql
+security definer
+set search_path=public
+as $$
+  select m.user_id,
+         coalesce((select sum(d.amount) from public.org_deposits d where d.organization_id=p_org and d.user_id=m.user_id),0)
+         - coalesce((select sum(c.quantity*c.unit_price) from public.org_consumptions c where c.organization_id=p_org and c.user_id=m.user_id),0) as balance
+  from public.memberships m
+  where m.organization_id=p_org
+    and public.is_org_member(p_org);
+$$;
+
+grant execute on function public.get_member_balances(uuid) to authenticated;
 
 create table if not exists public.org_member_groups (
   organization_id uuid not null references public.organizations(id) on delete cascade,
