@@ -152,7 +152,7 @@ else 0 end $$;
 create or replace function public.record_org_consumption(p_client text,p_org uuid,p_beverage uuid,p_quantity integer,p_at timestamptz)
 returns public.org_consumptions language plpgsql security definer set search_path=public
 as $$ declare v_bev org_beverages; v_balance numeric; v_row org_consumptions; begin
-  if not is_org_member(p_org) then raise exception 'Kein Mitglied'; end if;
+  if not is_org_admin(p_org) then raise exception 'Nur fÃ¼r Administratoren'; end if;
   select * into v_bev from org_beverages where id=p_beverage and organization_id=p_org and active for update;
   if not found or p_quantity<1 then raise exception 'Ungültige Buchung'; end if;
   select coalesce((select sum(amount) from org_deposits where organization_id=p_org and user_id=auth.uid()),0)-
@@ -173,6 +173,34 @@ as $$ declare v_row org_deposits; begin
   insert into org_deposits(client_id,organization_id,user_id,amount)
   values(p_client,p_org,auth.uid(),round(p_amount,2))
   on conflict(client_id) do update set client_id=excluded.client_id returning * into v_row;
+  return v_row;
+end $$;
+
+create or replace function public.admin_add_user_deposit(p_client text,p_org uuid,p_user uuid,p_amount numeric)
+returns public.org_deposits language plpgsql security definer set search_path=public
+as $$ declare v_row org_deposits; begin
+  if not is_org_admin(p_org) then raise exception 'Nur fÃ¼r Administratoren'; end if;
+  if p_amount<=0 then raise exception 'UngÃ¼ltiger Betrag'; end if;
+  if not exists(select 1 from memberships where organization_id=p_org and user_id=p_user) then raise exception 'Benutzer ist kein Mitglied'; end if;
+  insert into org_deposits(client_id,organization_id,user_id,amount)
+  values(p_client,p_org,p_user,round(p_amount,2))
+  on conflict(client_id) do update set client_id=excluded.client_id returning * into v_row;
+  return v_row;
+end $$;
+
+create or replace function public.add_member_by_email(p_org uuid,p_email text,p_group uuid)
+returns public.memberships language plpgsql security definer set search_path=public
+as $$ declare v_user uuid; v_row memberships; begin
+  if not is_org_admin(p_org) then raise exception 'Nur fÃ¼r Administratoren'; end if;
+  if not exists(select 1 from app_groups where id=p_group and organization_id=p_org) then raise exception 'Gruppe nicht gefunden'; end if;
+  select id into v_user from auth.users where lower(email)=lower(trim(p_email)) limit 1;
+  if v_user is null then raise exception 'Benutzer existiert noch nicht. Bitte Einladung senden.'; end if;
+  insert into memberships(organization_id,user_id,group_id,role)
+  values(p_org,v_user,p_group,'member')
+  on conflict(organization_id,user_id) do update set group_id=excluded.group_id returning * into v_row;
+  insert into org_member_groups(organization_id,user_id,group_id)
+  values(p_org,v_user,p_group)
+  on conflict do nothing;
   return v_row;
 end $$;
 
@@ -379,8 +407,8 @@ create policy "org_stock_admin" on org_stock_movements for insert to authenticat
 create policy "org_consume_read" on org_consumptions for select to authenticated using(user_id=auth.uid() or is_org_admin(organization_id));
 create policy "org_consume_delete" on org_consumptions for delete to authenticated using(is_org_admin(organization_id) or (user_id=auth.uid() and created_at>=now()-interval '5 minutes'));
 create policy "org_deposit_read" on org_deposits for select to authenticated using(user_id=auth.uid() or is_org_admin(organization_id));
-create policy "org_deposit_insert" on org_deposits for insert to authenticated with check(user_id=auth.uid() and is_org_member(organization_id));
+create policy "org_deposit_insert" on org_deposits for insert to authenticated with check(is_org_admin(organization_id));
 create policy "chat_group_read" on org_chat_messages for select to authenticated using(is_org_admin(organization_id) or exists(select 1 from org_member_groups where organization_id=org_chat_messages.organization_id and user_id=auth.uid() and group_id=org_chat_messages.group_id));
 create policy "member_groups_read" on org_member_groups for select to authenticated using(is_org_member(organization_id));
 
-grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz),add_org_deposit(text,uuid,numeric),add_org_stock(uuid,uuid,integer,text),upsert_org_beverage(uuid,text,numeric,numeric),update_org_beverage_price(uuid,uuid,numeric),update_org_beverage_purchase_price(uuid,uuid,numeric),deactivate_org_beverage(uuid,uuid),create_org_group(uuid,text),update_member_group(uuid,uuid,uuid),delete_member(uuid,uuid),delete_org_group(uuid,uuid),delete_workspace(uuid),reset_workspace_values(uuid),send_group_chat_message(uuid,uuid,text),give_beer_to_user(text,uuid,uuid,uuid,integer,timestamptz),set_member_groups(uuid,uuid,uuid[]),delete_org_consumption(uuid,uuid) to authenticated;
+grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz),add_org_deposit(text,uuid,numeric),admin_add_user_deposit(text,uuid,uuid,numeric),add_member_by_email(uuid,text,uuid),add_org_stock(uuid,uuid,integer,text),upsert_org_beverage(uuid,text,numeric,numeric),update_org_beverage_price(uuid,uuid,numeric),update_org_beverage_purchase_price(uuid,uuid,numeric),deactivate_org_beverage(uuid,uuid),create_org_group(uuid,text),update_member_group(uuid,uuid,uuid),delete_member(uuid,uuid),delete_org_group(uuid,uuid),delete_workspace(uuid),reset_workspace_values(uuid),send_group_chat_message(uuid,uuid,text),give_beer_to_user(text,uuid,uuid,uuid,integer,timestamptz),set_member_groups(uuid,uuid,uuid[]),delete_org_consumption(uuid,uuid) to authenticated;

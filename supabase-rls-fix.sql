@@ -720,3 +720,103 @@ end
 $$;
 
 grant execute on function public.reset_workspace_values(uuid) to authenticated;
+
+create or replace function public.admin_add_user_deposit(p_client text, p_org uuid, p_user uuid, p_amount numeric)
+returns public.org_deposits
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_row public.org_deposits;
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+  if p_amount <= 0 then
+    raise exception 'Ungültiger Betrag';
+  end if;
+  if not exists(select 1 from public.memberships where organization_id=p_org and user_id=p_user) then
+    raise exception 'Benutzer ist kein Mitglied';
+  end if;
+
+  insert into public.org_deposits(client_id, organization_id, user_id, amount)
+  values(p_client, p_org, p_user, round(p_amount, 2))
+  on conflict(client_id) do update set client_id=excluded.client_id
+  returning * into v_row;
+
+  return v_row;
+end
+$$;
+
+create or replace function public.add_member_by_email(p_org uuid, p_email text, p_group uuid)
+returns public.memberships
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_user uuid;
+  v_row public.memberships;
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+  if not exists(select 1 from public.app_groups where id=p_group and organization_id=p_org) then
+    raise exception 'Gruppe nicht gefunden';
+  end if;
+
+  select id into v_user
+  from auth.users
+  where lower(email)=lower(trim(p_email))
+  limit 1;
+
+  if v_user is null then
+    raise exception 'Benutzer existiert noch nicht. Bitte Einladung senden.';
+  end if;
+
+  insert into public.memberships(organization_id,user_id,group_id,role)
+  values(p_org,v_user,p_group,'member')
+  on conflict(organization_id,user_id) do update set group_id=excluded.group_id
+  returning * into v_row;
+
+  insert into public.org_member_groups(organization_id,user_id,group_id)
+  values(p_org,v_user,p_group)
+  on conflict do nothing;
+
+  return v_row;
+end
+$$;
+
+create or replace function public.add_org_deposit(p_client text, p_org uuid, p_amount numeric)
+returns public.org_deposits
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_row public.org_deposits;
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+  if p_amount <= 0 then
+    raise exception 'Ungültiger Betrag';
+  end if;
+
+  insert into public.org_deposits(client_id, organization_id, user_id, amount)
+  values(p_client, p_org, auth.uid(), round(p_amount, 2))
+  on conflict(client_id) do update set client_id=excluded.client_id
+  returning * into v_row;
+
+  return v_row;
+end
+$$;
+
+drop policy if exists "org_deposit_insert" on public.org_deposits;
+create policy "org_deposit_insert" on public.org_deposits
+  for insert to authenticated
+  with check (public.is_org_admin(organization_id));
+
+grant execute on function public.admin_add_user_deposit(text, uuid, uuid, numeric) to authenticated;
+grant execute on function public.add_member_by_email(uuid, text, uuid) to authenticated;

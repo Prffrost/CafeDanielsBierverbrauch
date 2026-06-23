@@ -134,7 +134,20 @@ function availableGroupsForCurrentUser() {
 }
 
 function visibleOrganizations() {
-  const limited = organizations.slice(0, WORKSPACE_LIMIT);
+  const unique = [];
+  const seen = new Set();
+  const active = organizations.find((item) => item.organization_id === activeOrganizationId);
+  if (active) {
+    unique.push(active);
+    seen.add((active.organizations?.name || active.organization_id).toLocaleLowerCase("de"));
+  }
+  for (const item of organizations) {
+    const key = (item.organizations?.name || item.organization_id).toLocaleLowerCase("de");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item);
+  }
+  const limited = unique.slice(0, WORKSPACE_LIMIT);
   if (activeOrganizationId && !limited.some((item) => item.organization_id === activeOrganizationId)) {
     const active = organizations.find((item) => item.organization_id === activeOrganizationId);
     if (active) return [active, ...limited.slice(0, WORKSPACE_LIMIT - 1)];
@@ -422,6 +435,7 @@ function renderStatus() {
 function renderOrganizationAdmin() {
   document.querySelector("#groups-list").innerHTML = organizationGroups.map((group) => `<div class="settings-row"><span>${escapeHTML(group.name)}</span><button type="button" data-delete-group="${group.id}" aria-label="Gruppe löschen"><svg class="icon"><use href="#icon-trash"/></svg></button></div>`).join("");
   document.querySelector("#invite-group").innerHTML = organizationGroups.map((group) => `<option value="${group.id}">${escapeHTML(group.name)}</option>`).join("");
+  document.querySelector("#member-create-group").innerHTML = organizationGroups.map((group) => `<option value="${group.id}">${escapeHTML(group.name)}</option>`).join("");
   document.querySelector("#members-list").innerHTML = organizationMembers.map((member) => {
     const isSelf = member.user_id === currentUser?.id;
     const groups = memberGroupIds(member.user_id);
@@ -530,8 +544,8 @@ function renderStatistics() {
 
 function renderBeverageSettings() {
   document.querySelector("#beverage-settings-list").innerHTML = settings.beverages.map((name) => {
-    const isDefault = DEFAULT_BEVERAGES.includes(name);
-    return `<div class="settings-row"><span>${escapeHTML(name)}</span><div class="beverage-setting-values"><label class="mini-label">VK</label><input class="beverage-price-input" data-price-beverage="${escapeHTML(name)}" type="text" inputmode="decimal" value="${(settings.prices[name] || 0).toFixed(2).replace(".", ",")}" aria-label="Preis für ${escapeHTML(name)}" ${REMOTE_ENABLED && !isAdmin ? "disabled" : ""}><span>€</span><label class="mini-label">EK</label><input class="beverage-price-input" data-purchase-price-beverage="${escapeHTML(name)}" type="text" inputmode="decimal" value="${(settings.purchasePrices?.[name] || 0).toFixed(2).replace(".", ",")}" aria-label="Einkaufspreis für ${escapeHTML(name)}" ${REMOTE_ENABLED && !isAdmin ? "disabled" : ""}><span>€</span>${isDefault || (REMOTE_ENABLED && !isAdmin) ? '' : `<button type="button" data-delete-beverage="${escapeHTML(name)}" aria-label="${escapeHTML(name)} löschen"><svg class="icon"><use href="#icon-trash"/></svg></button>`}</div></div>`;
+    const isFixed = name === "Bier";
+    return `<div class="settings-row"><span>${escapeHTML(name)}</span><div class="beverage-setting-values"><label class="mini-label">VK</label><input class="beverage-price-input" data-price-beverage="${escapeHTML(name)}" type="text" inputmode="decimal" value="${(settings.prices[name] || 0).toFixed(2).replace(".", ",")}" aria-label="Preis für ${escapeHTML(name)}" ${REMOTE_ENABLED && !isAdmin ? "disabled" : ""}><span>€</span><label class="mini-label">EK</label><input class="beverage-price-input" data-purchase-price-beverage="${escapeHTML(name)}" type="text" inputmode="decimal" value="${(settings.purchasePrices?.[name] || 0).toFixed(2).replace(".", ",")}" aria-label="Einkaufspreis für ${escapeHTML(name)}" ${REMOTE_ENABLED && !isAdmin ? "disabled" : ""}><span>€</span>${isFixed || (REMOTE_ENABLED && !isAdmin) ? '' : `<button type="button" data-delete-beverage="${escapeHTML(name)}" aria-label="${escapeHTML(name)} löschen"><svg class="icon"><use href="#icon-trash"/></svg></button>`}</div></div>`;
   }).join("");
   const beerQr = document.querySelector("#beer-qr");
   if (beerQr && !beerQr.dataset.rendered && window.QRCode) {
@@ -541,6 +555,8 @@ function renderBeverageSettings() {
   }
   const stockSelect = document.querySelector("#stock-beverage");
   if (stockSelect) stockSelect.innerHTML = settings.beverages.map((name) => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join("");
+  const depositSelect = document.querySelector("#deposit-user");
+  if (depositSelect) depositSelect.innerHTML = organizationMembers.map((member) => `<option value="${member.user_id}">${escapeHTML(member.profile?.display_name || member.user_id)}</option>`).join("");
   const stockList = document.querySelector("#stock-list");
   if (stockList) {
     stockList.innerHTML = settings.beverages.map((name) => {
@@ -703,9 +719,12 @@ document.querySelector("#deposit-form").addEventListener("submit", async (event)
   const amount = parsePrice(document.querySelector("#deposit-amount").value);
   if (!Number.isFinite(amount) || amount <= 0) return showToast("Bitte gültigen Betrag eingeben");
   if (currentUser) {
-  if (!activeOrganizationId) return showToast("Bitte zuerst ein aktives Lokal erstellen");
+    if (!isAdmin) return showToast("Nur Admin kann Guthaben zuweisen");
+    if (!activeOrganizationId) return showToast("Bitte zuerst ein aktives Lokal erstellen");
     if (!navigator.onLine) return showToast("Einzahlung benötigt eine Verbindung");
-    const result = await supabaseClient.rpc("add_org_deposit", { p_client: crypto.randomUUID(), p_org: activeOrganizationId, p_amount: Math.round(amount * 100) / 100 });
+    const targetUser = document.querySelector("#deposit-user").value;
+    if (!targetUser) return showToast("Bitte Benutzer auswählen");
+    const result = await supabaseClient.rpc("admin_add_user_deposit", { p_client: crypto.randomUUID(), p_org: activeOrganizationId, p_user: targetUser, p_amount: Math.round(amount * 100) / 100 });
     if (result.error) { remoteStatusMessage = remoteErrorMessage(result.error); renderStatus(); return showToast(remoteStatusMessage); }
     remoteStatusMessage = "";
     event.target.reset(); await loadRemoteState(); return showToast("Guthaben eingezahlt");
@@ -863,6 +882,19 @@ document.querySelector("#group-form").addEventListener("submit", async (event) =
   const result = await supabaseClient.rpc("create_org_group", { p_org: activeOrganizationId, p_name: name });
   if (result.error) return showToast(remoteErrorMessage(result.error));
   event.target.reset(); await loadRemoteState(); showToast("Gruppe erstellt");
+});
+
+document.querySelector("#member-create-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!isAdmin) return showToast("Nur für Administratoren");
+  const email = document.querySelector("#member-create-email").value.trim();
+  const groupId = document.querySelector("#member-create-group").value;
+  if (!email || !groupId) return showToast("E-Mail und Gruppe angeben");
+  const result = await supabaseClient.rpc("add_member_by_email", { p_org: activeOrganizationId, p_email: email, p_group: groupId });
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  event.target.reset();
+  await loadRemoteState();
+  showToast("Mitglied hinzugefügt");
 });
 
 document.querySelector("#invite-form").addEventListener("submit", async (event) => {
