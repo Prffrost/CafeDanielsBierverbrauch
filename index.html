@@ -26,6 +26,8 @@
     <symbol id="icon-stock" viewBox="0 0 24 24"><path d="m4 7 8-4 8 4-8 4-8-4Zm0 0v10l8 4 8-4V7m-8 4v10"/></symbol>
     <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6"/></symbol>
     <symbol id="icon-drink" viewBox="0 0 24 24"><path d="M6 3h12l-1 18H7L6 3Zm1 5h10M9 12h6"/></symbol>
+    <symbol id="icon-qr" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2m4 0h-2m-4 4h6m-2-2v4"/></symbol>
+    <symbol id="icon-theme" viewBox="0 0 24 24"><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/></symbol>
   </svg>
 
   <section class="auth-screen" id="auth-screen" hidden>
@@ -69,7 +71,9 @@
             <div class="fixed-price-card"><span>Festpreis pro Getränk</span><strong id="fixed-unit-price">0,00 €</strong></div>
             <div class="live-total"><span>Berechneter Betrag</span><strong id="calculated-price">3,50 €</strong></div>
             <button class="primary-button" type="submit"><svg class="icon"><use href="#icon-plus"/></svg> Eintrag speichern</button>
+            <button class="secondary-button" id="scan-beer-button" type="button"><svg class="icon"><use href="#icon-qr"/></svg> Bier scannen</button>
           </form>
+          <div class="scanner-card" id="scanner-card" hidden><video id="qr-video" playsinline muted></video><canvas id="qr-canvas" hidden></canvas><p class="form-note">Kamera auf den Bier-QR-Code richten. Wenn das iPhone keinen Scanner erlaubt, kannst du weiterhin normal über „Eintrag speichern“ buchen.</p><button class="secondary-button" id="stop-scan-button" type="button">Scanner schließen</button></div>
         </section>
 
         <section class="history" aria-labelledby="history-heading"><div class="section-heading"><div><p class="section-label">TAGESLISTE</p><h2 id="history-heading">Gespeicherte Einträge</h2></div><span class="count-badge" id="entry-count">0</span></div><div id="entry-list"></div></section>
@@ -84,14 +88,18 @@
           <div class="section-heading"><div><p class="section-label">GESAMTÜBERSICHT</p><h2 id="statistics-heading">Verbrauchsstatistik</h2></div></div>
           <div class="period-switch" role="group" aria-label="Zeitraum auswählen"><button class="is-active" type="button" data-period="week">Woche</button><button type="button" data-period="month">Monat</button><button type="button" data-period="year">Jahr</button></div>
           <p class="period-caption" id="period-caption"></p>
+          <div class="field-group admin-stat-filter" id="admin-stat-filter" hidden><label for="stats-user-filter">Admin-Filter Benutzer</label><select id="stats-user-filter"><option value="me">Nur ich</option><option value="all">Alle Benutzer</option></select></div>
           <div class="statistics-grid"><article class="stat-box"><span>Verbrauchstage</span><strong id="stat-days">0</strong></article><article class="stat-box"><span>Getränke gesamt</span><strong id="stat-drinks">0</strong></article><article class="stat-box"><span>Kosten gesamt</span><strong id="stat-cost">0,00 €</strong></article><article class="stat-box"><span>Ø pro Tag</span><strong id="stat-average">0,0</strong></article></div>
           <div class="chart-card" id="consumption-chart" aria-label="Getränkeverbrauch nach Tag"></div>
           <div class="breakdown-heading"><h3>Nach Getränk</h3></div><div id="beverage-breakdown"></div>
+          <div class="breakdown-heading admin-only-stat" hidden><h3>Nach Benutzer</h3></div><div id="user-breakdown" class="admin-only-stat" hidden></div>
         </section>
       </section>
 
       <section class="tab-panel" data-tab-panel="settings" aria-label="Einstellungen" hidden>
-        <section class="settings-card" id="account-card"><div class="section-heading"><div><p class="section-label">VERBINDUNG</p><h2>Benutzerkonto</h2></div><span class="sync-dot" id="sync-dot"></span></div><p class="account-email" id="account-email">Lokal</p><p class="form-note" id="account-role">Keine Serververbindung</p><div class="field-group workspace-field"><label for="workspace-select">Aktiver Bereich</label><select id="workspace-select"></select></div><form id="workspace-form" class="inline-form"><input id="workspace-name" type="text" maxlength="60" placeholder="Name des neuen Bereichs" required><button class="small-primary" type="submit">Erstellen</button></form><p class="form-note">Wer einen neuen Bereich erstellt, wird dort automatisch Administrator.</p><button class="secondary-button" id="logout-button" type="button">Abmelden</button></section>
+        <section class="settings-card" id="account-card"><div class="section-heading"><div><p class="section-label">VERBINDUNG</p><h2>Benutzerkonto</h2></div><span class="sync-dot" id="sync-dot"></span></div><p class="account-email" id="account-email">Lokal</p><p class="form-note" id="account-role">Keine Serververbindung</p><div class="field-group workspace-field"><label for="workspace-select">Aktiver Bereich</label><select id="workspace-select"></select></div><button class="danger-outline" id="delete-workspace-button" type="button" data-admin-only>Aktiven Bereich löschen</button><form id="workspace-form" class="inline-form"><input id="workspace-name" type="text" maxlength="60" placeholder="Name des neuen Bereichs" required><button class="small-primary" type="submit">Erstellen</button></form><p class="form-note">Wer einen neuen Bereich erstellt, wird dort automatisch Administrator.</p><button class="secondary-button" id="logout-button" type="button">Abmelden</button></section>
+
+        <section class="settings-card"><div class="section-heading"><div><p class="section-label">DARSTELLUNG</p><h2>Hell / Dunkel</h2></div><svg class="icon title-icon"><use href="#icon-theme"/></svg></div><div class="segmented-control" id="theme-toggle"><button type="button" data-theme-choice="dark">Dunkel</button><button type="button" data-theme-choice="light">Hell</button></div><p class="form-note">Die Auswahl wird auf diesem Gerät gespeichert.</p></section>
 
         <section class="settings-card" data-admin-only><div class="section-heading"><div><p class="section-label">GRUPPEN & EINLADUNGEN</p><h2>Mitglieder verwalten</h2></div><svg class="icon title-icon"><use href="#icon-days"/></svg></div><form id="group-form" class="inline-form"><input id="new-group-name" type="text" maxlength="40" placeholder="Neue Gruppe" required><button class="small-primary" type="submit">Erstellen</button></form><div id="groups-list" class="settings-list"></div><form id="invite-form"><div class="field-group"><label for="invite-group">Gruppe für den neuen Benutzer</label><select id="invite-group" required></select></div><div class="field-group"><label for="invite-email">E-Mail optional</label><input id="invite-email" type="email" placeholder="name@beispiel.de"></div><button class="primary-button" type="submit">Einladung erzeugen</button></form><div class="invite-result" id="invite-result" hidden><div id="invite-qr"></div><input id="invite-link" type="text" readonly><div class="invite-actions"><button class="small-primary" id="copy-invite" type="button">Link kopieren</button><a class="small-primary" id="mail-invite" href="#">Per Mail senden</a></div></div><h3 class="members-title">Mitglieder</h3><div id="members-list" class="settings-list"></div></section>
 
@@ -101,7 +109,9 @@
 
         <section class="settings-card"><div class="section-heading"><div><p class="section-label">GLOBALES LAGER</p><h2>Bierbestand</h2></div><svg class="icon title-icon"><use href="#icon-stock"/></svg></div><div class="large-value"><span id="settings-stock">0</span> <small>Flaschen</small></div><form id="stock-form" class="inline-form" data-admin-only><input id="stock-amount" type="number" inputmode="numeric" min="1" placeholder="Anzahl" required><button class="small-primary" type="submit">Hinzufügen</button></form><p class="form-note">Alle verbundenen Benutzer buchen aus diesem gemeinsamen Bestand. Nur der Admin kann Bestand hinzufügen.</p></section>
 
-        <section class="settings-card"><div class="section-heading"><div><p class="section-label">GETRÄNKE & PREISE</p><h2>Auswahl verwalten</h2></div><svg class="icon title-icon"><use href="#icon-drink"/></svg></div><p class="form-note">Nur der Admin kann Preise oder Getränke ändern.</p><div id="beverage-settings-list" class="settings-list"></div><form id="beverage-form" class="beverage-add-form" data-admin-only><input id="new-beverage" type="text" maxlength="30" placeholder="Getränkename" required><div class="price-input"><input id="new-beverage-price" type="text" inputmode="decimal" placeholder="Preis" required><span>€</span></div><button class="small-primary" type="submit"><svg class="icon"><use href="#icon-plus"/></svg> Hinzufügen</button></form></section>
+        <section class="settings-card"><div class="section-heading"><div><p class="section-label">GETRÄNKE & PREISE</p><h2>Auswahl verwalten</h2></div><svg class="icon title-icon"><use href="#icon-drink"/></svg></div><p class="form-note">Nur der Admin kann Preise, Einkaufspreise oder Getränke ändern.</p><div id="beverage-settings-list" class="settings-list"></div><form id="beverage-form" class="beverage-add-form" data-admin-only><input id="new-beverage" type="text" maxlength="30" placeholder="Getränkename" required><div class="price-input"><input id="new-beverage-price" type="text" inputmode="decimal" placeholder="Verkaufspreis" required><span>€</span></div><div class="price-input"><input id="new-beverage-purchase-price" type="text" inputmode="decimal" placeholder="Einkaufspreis"><span>€</span></div><button class="small-primary" type="submit"><svg class="icon"><use href="#icon-plus"/></svg> Hinzufügen</button></form></section>
+
+        <section class="settings-card"><div class="section-heading"><div><p class="section-label">QR-CODE</p><h2>Bier scannen</h2></div><svg class="icon title-icon"><use href="#icon-qr"/></svg></div><div class="invite-result"><div id="beer-qr"></div><input id="beer-qr-value" type="text" readonly value="cafe-daniels:beverage:Bier:1"></div><p class="form-note">Diesen QR-Code kannst du ausdrucken. Beim Scannen wird 1 Bier ausgewählt und direkt gebucht.</p></section>
 
         <details class="install-help"><summary>App auf dem iPhone installieren</summary><p>In Safari auf <strong>Teilen</strong>, dann auf <strong>Zu Home-Bildschirm hinzufügen</strong> tippen.</p></details>
       </section>
@@ -118,6 +128,7 @@
   <script src="supabase-config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
   <script src="app.js" defer></script>
 </body>
 </html>

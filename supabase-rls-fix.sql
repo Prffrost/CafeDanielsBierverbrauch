@@ -210,3 +210,186 @@ grant execute on function public.add_org_stock(uuid, uuid, integer, text) to aut
 grant execute on function public.upsert_org_beverage(uuid, text, numeric) to authenticated;
 grant execute on function public.update_org_beverage_price(uuid, uuid, numeric) to authenticated;
 grant execute on function public.deactivate_org_beverage(uuid, uuid) to authenticated;
+
+alter table public.org_beverages
+add column if not exists purchase_price numeric(10,2) not null default 0 check(purchase_price >= 0);
+
+update public.org_beverages
+set purchase_price = 1.00
+where name = 'Bier' and purchase_price = 0;
+
+drop function if exists public.upsert_org_beverage(uuid, text, numeric);
+
+create or replace function public.upsert_org_beverage(p_org uuid, p_name text, p_price numeric, p_purchase_price numeric default 0)
+returns public.org_beverages
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_row public.org_beverages;
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+  if trim(p_name) = '' or p_price <= 0 or p_purchase_price < 0 then
+    raise exception 'Name oder Preis ungültig';
+  end if;
+
+  insert into public.org_beverages(organization_id, name, price, purchase_price, active)
+  values(p_org, trim(p_name), round(p_price, 2), round(p_purchase_price, 2), true)
+  on conflict(organization_id, name)
+  do update set price=excluded.price, purchase_price=excluded.purchase_price, active=true
+  returning * into v_row;
+
+  return v_row;
+end
+$$;
+
+create or replace function public.update_org_beverage_purchase_price(p_org uuid, p_beverage uuid, p_purchase_price numeric)
+returns public.org_beverages
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_row public.org_beverages;
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+  if p_purchase_price < 0 then
+    raise exception 'Einkaufspreis ungültig';
+  end if;
+
+  update public.org_beverages
+  set purchase_price=round(p_purchase_price, 2)
+  where id=p_beverage and organization_id=p_org
+  returning * into v_row;
+
+  if not found then
+    raise exception 'Getränk nicht gefunden';
+  end if;
+
+  return v_row;
+end
+$$;
+
+create or replace function public.create_org_group(p_org uuid, p_name text)
+returns public.app_groups
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_row public.app_groups;
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+  if trim(p_name) = '' then
+    raise exception 'Name fehlt';
+  end if;
+
+  insert into public.app_groups(organization_id, name)
+  values(p_org, trim(p_name))
+  returning * into v_row;
+
+  return v_row;
+end
+$$;
+
+create or replace function public.update_member_group(p_org uuid, p_user uuid, p_group uuid)
+returns public.memberships
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_row public.memberships;
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+  if not exists(select 1 from public.app_groups where id=p_group and organization_id=p_org) then
+    raise exception 'Gruppe nicht gefunden';
+  end if;
+
+  update public.memberships
+  set group_id=p_group
+  where organization_id=p_org and user_id=p_user and role <> 'admin'
+  returning * into v_row;
+
+  if not found then
+    raise exception 'Mitglied nicht gefunden oder geschützt';
+  end if;
+
+  return v_row;
+end
+$$;
+
+create or replace function public.delete_member(p_org uuid, p_user uuid)
+returns void
+language plpgsql
+security definer
+set search_path=public
+as $$
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+  if p_user = auth.uid() then
+    raise exception 'Du kannst dich nicht selbst entfernen';
+  end if;
+
+  delete from public.memberships
+  where organization_id=p_org and user_id=p_user and role <> 'admin';
+end
+$$;
+
+create or replace function public.delete_org_group(p_org uuid, p_group uuid)
+returns void
+language plpgsql
+security definer
+set search_path=public
+as $$
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+  if (select count(*) from public.app_groups where organization_id=p_org) <= 1 then
+    raise exception 'Die letzte Gruppe kann nicht gelöscht werden';
+  end if;
+
+  update public.memberships
+  set group_id = null
+  where organization_id=p_org and group_id=p_group;
+
+  delete from public.app_groups
+  where id=p_group and organization_id=p_org;
+end
+$$;
+
+create or replace function public.delete_workspace(p_org uuid)
+returns void
+language plpgsql
+security definer
+set search_path=public
+as $$
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+
+  delete from public.organizations
+  where id=p_org;
+end
+$$;
+
+grant execute on function public.upsert_org_beverage(uuid, text, numeric, numeric) to authenticated;
+grant execute on function public.update_org_beverage_purchase_price(uuid, uuid, numeric) to authenticated;
+grant execute on function public.create_org_group(uuid, text) to authenticated;
+grant execute on function public.update_member_group(uuid, uuid, uuid) to authenticated;
+grant execute on function public.delete_member(uuid, uuid) to authenticated;
+grant execute on function public.delete_org_group(uuid, uuid) to authenticated;
+grant execute on function public.delete_workspace(uuid) to authenticated;

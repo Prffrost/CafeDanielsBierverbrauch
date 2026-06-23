@@ -2,6 +2,7 @@ const STORAGE_KEY = "cafe-daniels-drink-entries-v1";
 const SETTINGS_KEY = "cafe-daniels-settings-v1";
 const DEFAULT_BEVERAGES = ["Bier", "Spezi", "Cola", "Wein"];
 const DEFAULT_PRICES = { Bier: 3.5, Spezi: 3, Cola: 3, Wein: 4.5 };
+const DEFAULT_PURCHASE_PRICES = { Bier: 1 };
 const SUPABASE_CONFIG = window.CAFE_DANIELS_SUPABASE || {};
 const REMOTE_ENABLED = Boolean(SUPABASE_CONFIG.url && SUPABASE_CONFIG.publishableKey && window.supabase);
 const supabaseClient = REMOTE_ENABLED ? window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.publishableKey) : null;
@@ -32,6 +33,10 @@ let activeOrganizationId = localStorage.getItem("cafe-daniels-active-org") || ""
 let organizationGroups = [];
 let organizationMembers = [];
 let remoteStatusMessage = "";
+let adminEntries = [];
+let activeStatsUser = "me";
+let scannerStream = null;
+let scannerFrame = 0;
 
 dateInput.value = localDateString(new Date());
 
@@ -43,21 +48,24 @@ function loadEntries() {
 }
 
 function loadSettings() {
-  const fallback = { beverages: [...DEFAULT_BEVERAGES], prices: { ...DEFAULT_PRICES }, deposits: 0, beerStockAdded: 0, profileName: "", profilePhoto: "", remoteInitialized: false };
+  const fallback = { beverages: [...DEFAULT_BEVERAGES], prices: { ...DEFAULT_PRICES }, purchasePrices: { ...DEFAULT_PURCHASE_PRICES }, deposits: 0, beerStockAdded: 0, profileName: "", profilePhoto: "", remoteInitialized: false, theme: "dark" };
   try {
     const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
     if (!stored) return fallback;
     const custom = Array.isArray(stored.beverages) ? stored.beverages.filter((item) => typeof item === "string" && item.trim()) : [];
     const beverages = [...new Set([...DEFAULT_BEVERAGES, ...custom])];
     const storedPrices = stored.prices && typeof stored.prices === "object" ? stored.prices : {};
+    const storedPurchasePrices = stored.purchasePrices && typeof stored.purchasePrices === "object" ? stored.purchasePrices : {};
     return {
       beverages,
       prices: Object.fromEntries(beverages.map((name) => [name, Number(storedPrices[name]) > 0 ? Number(storedPrices[name]) : (DEFAULT_PRICES[name] || 3.5)])),
+      purchasePrices: Object.fromEntries(beverages.map((name) => [name, Number(storedPurchasePrices[name]) >= 0 ? Number(storedPurchasePrices[name]) : (DEFAULT_PURCHASE_PRICES[name] || 0)])),
       deposits: Number(stored.deposits) || 0,
       beerStockAdded: Number(stored.beerStockAdded) || 0,
       profileName: typeof stored.profileName === "string" ? stored.profileName : "",
       profilePhoto: typeof stored.profilePhoto === "string" ? stored.profilePhoto : "",
-      remoteInitialized: Boolean(stored.remoteInitialized)
+      remoteInitialized: Boolean(stored.remoteInitialized),
+      theme: stored.theme === "light" ? "light" : "dark"
     };
   } catch { return fallback; }
 }
@@ -88,6 +96,12 @@ function shortDate(value) {
 
 function escapeHTML(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
+}
+
+function applyTheme() {
+  document.body.dataset.theme = settings.theme || "dark";
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", settings.theme === "light" ? "#fff7ea" : "#17120d");
+  document.querySelectorAll("[data-theme-choice]").forEach((button) => button.classList.toggle("is-active", button.dataset.themeChoice === settings.theme));
 }
 
 function totalSpent() { return entries.reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0); }
@@ -210,14 +224,17 @@ async function loadRemoteState() {
   if (!currentUser || !activeOrganizationId) return;
   const membership = organizations.find((item) => item.organization_id === activeOrganizationId);
   isAdmin = membership?.role === "admin";
-  const [profileResult, beverageResult, consumptionResult, depositResult, groupResult, memberResult] = await Promise.all([
+  const [profileResult, firstBeverageResult, consumptionResult, depositResult, groupResult, memberResult] = await Promise.all([
     supabaseClient.from("profiles").select("display_name").eq("id", currentUser.id).single(),
-    supabaseClient.from("org_beverages").select("id,name,price,active").eq("organization_id", activeOrganizationId).eq("active", true).order("name"),
+    supabaseClient.from("org_beverages").select("id,name,price,purchase_price,active").eq("organization_id", activeOrganizationId).eq("active", true).order("name"),
     supabaseClient.from("org_consumptions").select("id,client_id,quantity,unit_price,consumed_at,org_beverages(id,name)").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id).order("consumed_at", { ascending: false }),
     supabaseClient.from("org_deposits").select("amount").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id),
     supabaseClient.from("app_groups").select("id,name").eq("organization_id", activeOrganizationId).order("name"),
     supabaseClient.from("memberships").select("user_id,group_id,role").eq("organization_id", activeOrganizationId)
   ]);
+  const beverageResult = firstBeverageResult.error?.message?.includes("purchase_price")
+    ? await supabaseClient.from("org_beverages").select("id,name,price,active").eq("organization_id", activeOrganizationId).eq("active", true).order("name")
+    : firstBeverageResult;
   const firstError = [profileResult, beverageResult, consumptionResult, depositResult, groupResult, memberResult].find((result) => result.error)?.error;
   if (firstError) throw firstError;
 
@@ -232,6 +249,7 @@ async function loadRemoteState() {
   remoteBeverageIds = new Map(beverageResult.data.map((item) => [item.name, item.id]));
   settings.beverages = beverageResult.data.map((item) => item.name);
   settings.prices = Object.fromEntries(beverageResult.data.map((item) => [item.name, Number(item.price)]));
+  settings.purchasePrices = Object.fromEntries(beverageResult.data.map((item) => [item.name, Number(item.purchase_price) || 0]));
 
   const pending = entries.filter((entry) => entry.pending);
   let legacy = entries.filter((entry) => entry.legacy);
@@ -242,6 +260,13 @@ async function loadRemoteState() {
   const remoteEntries = consumptionResult.data.map((item) => ({ id: item.client_id, remoteId: item.id, remote: true, date: item.consumed_at.slice(0, 10), beverage: item.org_beverages.name, quantity: item.quantity, unitPrice: Number(item.unit_price), createdAt: item.consumed_at }));
   entries = [...pending, ...remoteEntries, ...legacy];
   remoteBalance = depositResult.data.reduce((sum, item) => sum + Number(item.amount), 0) - remoteEntries.reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0);
+  adminEntries = [];
+  if (isAdmin) {
+    const adminConsumption = await supabaseClient.from("org_consumptions").select("id,client_id,user_id,quantity,unit_price,consumed_at,org_beverages(id,name)").eq("organization_id", activeOrganizationId).order("consumed_at", { ascending: false });
+    if (!adminConsumption.error) {
+      adminEntries = adminConsumption.data.map((item) => ({ id: item.client_id, remoteId: item.id, remote: true, userId: item.user_id, date: item.consumed_at.slice(0, 10), beverage: item.org_beverages.name, quantity: item.quantity, unitPrice: Number(item.unit_price), createdAt: item.consumed_at }));
+    }
+  }
   const beerId = remoteBeverageIds.get("Bier");
   if (beerId) {
     const stockResult = await supabaseClient.rpc("get_org_stock", { p_org: activeOrganizationId, p_beverage: beerId });
@@ -265,7 +290,7 @@ async function syncPendingConsumptions() {
   await loadRemoteState();
 }
 
-async function loadOrganizations() {
+async function loadOrganizations({ autoCreate = true } = {}) {
   let result = await supabaseClient.from("memberships").select("organization_id,group_id,role,organizations(id,name)").eq("user_id", currentUser.id);
   if (result.error) throw result.error;
   organizations = result.data;
@@ -285,7 +310,7 @@ async function loadOrganizations() {
       if (cachedOrganization?.id && cachedOrganization.userId === currentUser.id) organizations = [{ organization_id: cachedOrganization.id, group_id: null, role: "admin", organizations: cachedOrganization }];
     } catch { localStorage.removeItem("cafe-daniels-created-org"); }
   }
-  if (!organizations.length) {
+  if (!organizations.length && autoCreate) {
     const workspaceName = localStorage.getItem("cafe-daniels-new-workspace") || `${settings.profileName || "Mein"} Bereich`;
     const created = await supabaseClient.rpc("create_workspace", { p_name: workspaceName });
     if (created.error) throw created.error;
@@ -296,7 +321,12 @@ async function loadOrganizations() {
     organizations = reload.data;
     if (!organizations.length) organizations = [{ organization_id: created.data, group_id: null, role: "admin", organizations: { id: created.data, name: workspaceName } }];
   }
-  if (!organizations.length) throw new Error("Noch kein Bereich vorhanden. Bitte unter Einstellungen einen Bereich erstellen.");
+  if (!organizations.length) {
+    activeOrganizationId = "";
+    localStorage.removeItem("cafe-daniels-active-org");
+    if (autoCreate) throw new Error("Noch kein Bereich vorhanden. Bitte unter Einstellungen einen Bereich erstellen.");
+    return;
+  }
   if (!organizations.some((item) => item.organization_id === activeOrganizationId)) activeOrganizationId = organizations[0].organization_id;
   localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
   remoteStatusMessage = "";
@@ -334,17 +364,31 @@ function renderStatus() {
   workspaceSelect.innerHTML = organizations.map((item) => `<option value="${item.organization_id}">${escapeHTML(item.organizations.name)}</option>`).join("");
   workspaceSelect.value = activeOrganizationId;
   workspaceSelect.disabled = !organizations.length;
+  document.querySelector("#delete-workspace-button").hidden = !isAdmin || !activeOrganizationId;
 }
 
 function renderOrganizationAdmin() {
-  document.querySelector("#groups-list").innerHTML = organizationGroups.map((group) => `<div class="settings-row"><span>${escapeHTML(group.name)}</span><small>Gruppe</small></div>`).join("");
+  document.querySelector("#groups-list").innerHTML = organizationGroups.map((group) => `<div class="settings-row"><span>${escapeHTML(group.name)}</span><button type="button" data-delete-group="${group.id}" aria-label="Gruppe löschen"><svg class="icon"><use href="#icon-trash"/></svg></button></div>`).join("");
   document.querySelector("#invite-group").innerHTML = organizationGroups.map((group) => `<option value="${group.id}">${escapeHTML(group.name)}</option>`).join("");
-  document.querySelector("#members-list").innerHTML = organizationMembers.map((member) => `<div class="member-row"><span>${escapeHTML(member.profile?.display_name || member.user_id)}${member.role === "admin" ? " · Admin" : ""}</span><select data-member-user="${member.user_id}" ${member.role === "admin" ? "disabled" : ""}>${organizationGroups.map((group) => `<option value="${group.id}" ${group.id === member.group_id ? "selected" : ""}>${escapeHTML(group.name)}</option>`).join("")}</select></div>`).join("");
+  document.querySelector("#members-list").innerHTML = organizationMembers.map((member) => {
+    const isSelf = member.user_id === currentUser?.id;
+    return `<div class="member-row"><span>${escapeHTML(member.profile?.display_name || member.user_id)}${member.role === "admin" ? " · Admin" : ""}</span><select data-member-user="${member.user_id}" ${member.role === "admin" ? "disabled" : ""}>${organizationGroups.map((group) => `<option value="${group.id}" ${group.id === member.group_id ? "selected" : ""}>${escapeHTML(group.name)}</option>`).join("")}</select><button type="button" data-delete-member="${member.user_id}" ${isSelf || member.role === "admin" ? "disabled" : ""} aria-label="Mitglied entfernen"><svg class="icon"><use href="#icon-trash"/></svg></button></div>`;
+  }).join("");
 }
 
 function renderStatistics() {
   const range = periodRange(activePeriod);
-  const periodEntries = entries.filter((entry) => { const date = new Date(`${entry.date}T12:00:00`); return date >= range.start && date < range.end; });
+  const statsSelect = document.querySelector("#stats-user-filter");
+  const useAdminEntries = isAdmin && activeStatsUser !== "me";
+  const sourceEntries = useAdminEntries ? (activeStatsUser === "all" ? adminEntries : adminEntries.filter((entry) => entry.userId === activeStatsUser)) : entries;
+  document.querySelector("#admin-stat-filter").hidden = !isAdmin;
+  document.querySelectorAll(".admin-only-stat").forEach((element) => { element.hidden = !isAdmin; });
+  if (isAdmin) {
+    const selected = statsSelect.value || activeStatsUser;
+    statsSelect.innerHTML = `<option value="me">Nur ich</option><option value="all">Alle Benutzer</option>${organizationMembers.map((member) => `<option value="${member.user_id}">${escapeHTML(member.profile?.display_name || member.user_id)}</option>`).join("")}`;
+    statsSelect.value = [...statsSelect.options].some((option) => option.value === selected) ? selected : activeStatsUser;
+  }
+  const periodEntries = sourceEntries.filter((entry) => { const date = new Date(`${entry.date}T12:00:00`); return date >= range.start && date < range.end; });
   const days = groupEntriesByDay(periodEntries);
   const allDays = groupEntriesByDay();
   const drinks = days.reduce((sum, day) => sum + day.quantity, 0);
@@ -371,6 +415,22 @@ function renderStatistics() {
     ? [...totals.entries()].sort((a, b) => b[1].quantity - a[1].quantity).map(([name, value]) => `<div class="breakdown-row"><div><strong>${escapeHTML(name)}</strong><span>${value.quantity} Getränke</span></div><div class="breakdown-values"><strong>${currency(value.cost)}</strong><span>${Math.round(value.quantity / Math.max(drinks, 1) * 100)} %</span></div></div>`).join("")
     : '<p class="days-empty">Noch keine Verbrauchsdaten.</p>';
 
+  const userTotals = new Map();
+  if (isAdmin) {
+    for (const entry of periodEntries) {
+      const value = userTotals.get(entry.userId) || { quantity: 0, cost: 0 };
+      value.quantity += entry.quantity;
+      value.cost += entry.quantity * entry.unitPrice;
+      userTotals.set(entry.userId, value);
+    }
+    document.querySelector("#user-breakdown").innerHTML = userTotals.size
+      ? [...userTotals.entries()].sort((a, b) => b[1].cost - a[1].cost).map(([userId, value]) => {
+        const member = organizationMembers.find((item) => item.user_id === userId);
+        return `<div class="user-stat-row"><div><strong>${escapeHTML(member?.profile?.display_name || userId || "Unbekannt")}</strong><span>${value.quantity} Getränke</span></div><div class="breakdown-values"><strong>${currency(value.cost)}</strong><span>${Math.round(value.quantity / Math.max(drinks, 1) * 100)} %</span></div></div>`;
+      }).join("")
+      : '<p class="days-empty">Keine Benutzerdaten im Zeitraum.</p>';
+  }
+
   const daysList = document.querySelector("#days-list");
   daysList.innerHTML = allDays.length ? allDays.map((day) => {
     const types = [...day.beverages.entries()].map(([name, quantity]) => `${quantity}× ${escapeHTML(name)}`).join(" · ");
@@ -381,8 +441,14 @@ function renderStatistics() {
 function renderBeverageSettings() {
   document.querySelector("#beverage-settings-list").innerHTML = settings.beverages.map((name) => {
     const isDefault = DEFAULT_BEVERAGES.includes(name);
-    return `<div class="settings-row"><span>${escapeHTML(name)}</span><div class="beverage-setting-values"><input class="beverage-price-input" data-price-beverage="${escapeHTML(name)}" type="text" inputmode="decimal" value="${settings.prices[name].toFixed(2).replace(".", ",")}" aria-label="Preis für ${escapeHTML(name)}" ${REMOTE_ENABLED && !isAdmin ? "disabled" : ""}><span>€</span>${isDefault || (REMOTE_ENABLED && !isAdmin) ? '' : `<button type="button" data-delete-beverage="${escapeHTML(name)}" aria-label="${escapeHTML(name)} löschen"><svg class="icon"><use href="#icon-trash"/></svg></button>`}</div></div>`;
+    return `<div class="settings-row"><span>${escapeHTML(name)}</span><div class="beverage-setting-values"><label class="mini-label">VK</label><input class="beverage-price-input" data-price-beverage="${escapeHTML(name)}" type="text" inputmode="decimal" value="${(settings.prices[name] || 0).toFixed(2).replace(".", ",")}" aria-label="Preis für ${escapeHTML(name)}" ${REMOTE_ENABLED && !isAdmin ? "disabled" : ""}><span>€</span><label class="mini-label">EK</label><input class="beverage-price-input" data-purchase-price-beverage="${escapeHTML(name)}" type="text" inputmode="decimal" value="${(settings.purchasePrices?.[name] || 0).toFixed(2).replace(".", ",")}" aria-label="Einkaufspreis für ${escapeHTML(name)}" ${REMOTE_ENABLED && !isAdmin ? "disabled" : ""}><span>€</span>${isDefault || (REMOTE_ENABLED && !isAdmin) ? '' : `<button type="button" data-delete-beverage="${escapeHTML(name)}" aria-label="${escapeHTML(name)} löschen"><svg class="icon"><use href="#icon-trash"/></svg></button>`}</div></div>`;
   }).join("");
+  const beerQr = document.querySelector("#beer-qr");
+  if (beerQr && !beerQr.dataset.rendered && window.QRCode) {
+    beerQr.innerHTML = "";
+    new window.QRCode(beerQr, { text: document.querySelector("#beer-qr-value").value, width: 180, height: 180 });
+    beerQr.dataset.rendered = "1";
+  }
 }
 
 function updateCalculatedPrice() {
@@ -393,6 +459,7 @@ function updateCalculatedPrice() {
 }
 
 function render() {
+  applyTheme();
   friendlyDate.textContent = formattedDate(dateInput.value);
   const dailyEntries = entries.filter((entry) => entry.date === dateInput.value).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   document.querySelector("#total-quantity").textContent = dailyEntries.reduce((sum, entry) => sum + entry.quantity, 0);
@@ -416,8 +483,66 @@ function showToast(message) {
   toastTimer = setTimeout(() => toast.classList.remove("visible"), 1900);
 }
 
+function handleQrPayload(payload) {
+  const parts = String(payload || "").trim().split(":");
+  if (parts[0] !== "cafe-daniels" || parts[1] !== "beverage") return false;
+  const beverage = parts[2] || "Bier";
+  const quantity = Number.parseInt(parts[3] || "1", 10);
+  if (!settings.beverages.includes(beverage)) {
+    showToast("Getränk aus QR-Code nicht gefunden");
+    return true;
+  }
+  beverageInput.value = beverage;
+  quantityInput.value = Number.isInteger(quantity) && quantity > 0 ? quantity : 1;
+  updateCalculatedPrice();
+  stopScanner();
+  form.requestSubmit();
+  return true;
+}
+
+async function startScanner() {
+  if (!navigator.mediaDevices?.getUserMedia) return showToast("Kamera wird auf diesem Gerät nicht unterstützt");
+  const video = document.querySelector("#qr-video");
+  const canvas = document.querySelector("#qr-canvas");
+  const card = document.querySelector("#scanner-card");
+  try {
+    scannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+    video.srcObject = scannerStream;
+    card.hidden = false;
+    await video.play();
+    scanFrame(video, canvas);
+  } catch {
+    showToast("Kamera konnte nicht geöffnet werden");
+  }
+}
+
+function scanFrame(video, canvas) {
+  if (!scannerStream) return;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (video.readyState === video.HAVE_ENOUGH_DATA) {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const image = context.getImageData(0, 0, canvas.width, canvas.height);
+    const code = window.jsQR ? window.jsQR(image.data, image.width, image.height) : null;
+    if (code?.data && handleQrPayload(code.data)) return;
+  }
+  scannerFrame = window.requestAnimationFrame(() => scanFrame(video, canvas));
+}
+
+function stopScanner() {
+  if (scannerFrame) cancelAnimationFrame(scannerFrame);
+  scannerFrame = 0;
+  if (scannerStream) scannerStream.getTracks().forEach((track) => track.stop());
+  scannerStream = null;
+  const card = document.querySelector("#scanner-card");
+  if (card) card.hidden = true;
+}
+
 document.querySelector("#decrease").addEventListener("click", () => { quantityInput.value = Math.max(1, (Number.parseInt(quantityInput.value, 10) || 1) - 1); updateCalculatedPrice(); });
 document.querySelector("#increase").addEventListener("click", () => { quantityInput.value = Math.min(999, (Number.parseInt(quantityInput.value, 10) || 0) + 1); updateCalculatedPrice(); });
+document.querySelector("#scan-beer-button").addEventListener("click", startScanner);
+document.querySelector("#stop-scan-button").addEventListener("click", stopScanner);
 quantityInput.addEventListener("input", updateCalculatedPrice);
 beverageInput.addEventListener("change", updateCalculatedPrice);
 dateInput.addEventListener("change", render);
@@ -498,15 +623,18 @@ document.querySelector("#beverage-form").addEventListener("submit", async (event
   const input = document.querySelector("#new-beverage");
   const name = input.value.trim();
   const price = parsePrice(document.querySelector("#new-beverage-price").value);
+  const purchasePriceInput = document.querySelector("#new-beverage-purchase-price").value;
+  const purchasePrice = purchasePriceInput.trim() ? parsePrice(purchasePriceInput) : 0;
   if (!name || !Number.isFinite(price) || price <= 0) return showToast("Name und gültigen Preis eingeben");
+  if (!Number.isFinite(purchasePrice) || purchasePrice < 0) return showToast("Bitte gültigen Einkaufspreis eingeben");
   if (settings.beverages.some((item) => item.toLocaleLowerCase("de") === name.toLocaleLowerCase("de"))) return showToast("Getränk ist bereits vorhanden");
   if (currentUser) {
     if (!isAdmin) return showToast("Nur für Administratoren");
-    const result = await supabaseClient.rpc("upsert_org_beverage", { p_org: activeOrganizationId, p_name: name, p_price: Math.round(price * 100) / 100 });
+    const result = await supabaseClient.rpc("upsert_org_beverage", { p_org: activeOrganizationId, p_name: name, p_price: Math.round(price * 100) / 100, p_purchase_price: Math.round(purchasePrice * 100) / 100 });
     if (result.error) return showToast(remoteErrorMessage(result.error));
     event.target.reset(); await loadRemoteState(); beverageInput.value = name; updateCalculatedPrice(); return showToast("Getränk hinzugefügt");
   }
-  settings.beverages.push(name); settings.prices[name] = Math.round(price * 100) / 100; persistSettings(); event.target.reset(); render(); beverageInput.value = name; updateCalculatedPrice(); showToast("Getränk hinzugefügt");
+  settings.beverages.push(name); settings.prices[name] = Math.round(price * 100) / 100; settings.purchasePrices[name] = Math.round(purchasePrice * 100) / 100; persistSettings(); event.target.reset(); render(); beverageInput.value = name; updateCalculatedPrice(); showToast("Getränk hinzugefügt");
 });
 
 document.querySelector("#beverage-settings-list").addEventListener("click", async (event) => {
@@ -524,18 +652,23 @@ document.querySelector("#beverage-settings-list").addEventListener("click", asyn
 });
 
 document.querySelector("#beverage-settings-list").addEventListener("change", async (event) => {
-  const input = event.target.closest("[data-price-beverage]");
+  const input = event.target.closest("[data-price-beverage], [data-purchase-price-beverage]");
   if (!input) return;
   const price = parsePrice(input.value);
-  if (!Number.isFinite(price) || price <= 0) { renderBeverageSettings(); return showToast("Bitte gültigen Preis eingeben"); }
+  const isPurchase = input.hasAttribute("data-purchase-price-beverage");
+  const beverageName = input.dataset.priceBeverage || input.dataset.purchasePriceBeverage;
+  if (!Number.isFinite(price) || price < 0 || (!isPurchase && price <= 0)) { renderBeverageSettings(); return showToast("Bitte gültigen Preis eingeben"); }
   if (currentUser) {
     if (!isAdmin) return showToast("Nur für Administratoren");
-    const result = await supabaseClient.rpc("update_org_beverage_price", { p_org: activeOrganizationId, p_beverage: remoteBeverageIds.get(input.dataset.priceBeverage), p_price: Math.round(price * 100) / 100 });
+    const result = isPurchase
+      ? await supabaseClient.rpc("update_org_beverage_purchase_price", { p_org: activeOrganizationId, p_beverage: remoteBeverageIds.get(beverageName), p_purchase_price: Math.round(price * 100) / 100 })
+      : await supabaseClient.rpc("update_org_beverage_price", { p_org: activeOrganizationId, p_beverage: remoteBeverageIds.get(beverageName), p_price: Math.round(price * 100) / 100 });
     if (result.error) return showToast(remoteErrorMessage(result.error));
-    await loadRemoteState(); return showToast("Globaler Preis gespeichert");
+    await loadRemoteState(); return showToast(isPurchase ? "Einkaufspreis gespeichert" : "Globaler Preis gespeichert");
   }
-  settings.prices[input.dataset.priceBeverage] = Math.round(price * 100) / 100;
-  persistSettings(); render(); updateCalculatedPrice(); showToast("Preis gespeichert");
+  if (isPurchase) settings.purchasePrices[beverageName] = Math.round(price * 100) / 100;
+  else settings.prices[beverageName] = Math.round(price * 100) / 100;
+  persistSettings(); render(); updateCalculatedPrice(); showToast(isPurchase ? "Einkaufspreis gespeichert" : "Preis gespeichert");
 });
 
 document.querySelector("#profile-photo").addEventListener("change", async (event) => {
@@ -592,7 +725,7 @@ document.querySelector("#group-form").addEventListener("submit", async (event) =
   event.preventDefault();
   if (!isAdmin) return showToast("Nur für Administratoren");
   const name = document.querySelector("#new-group-name").value.trim();
-  const result = await supabaseClient.from("app_groups").insert({ organization_id: activeOrganizationId, name });
+  const result = await supabaseClient.rpc("create_org_group", { p_org: activeOrganizationId, p_name: name });
   if (result.error) return showToast(remoteErrorMessage(result.error));
   event.target.reset(); await loadRemoteState(); showToast("Gruppe erstellt");
 });
@@ -620,10 +753,64 @@ document.querySelector("#copy-invite").addEventListener("click", async () => {
 document.querySelector("#members-list").addEventListener("change", async (event) => {
   const select = event.target.closest("[data-member-user]");
   if (!select || !isAdmin) return;
-  const result = await supabaseClient.from("memberships").update({ group_id: select.value }).eq("organization_id", activeOrganizationId).eq("user_id", select.dataset.memberUser);
+  const result = await supabaseClient.rpc("update_member_group", { p_org: activeOrganizationId, p_user: select.dataset.memberUser, p_group: select.value });
   if (result.error) return showToast(remoteErrorMessage(result.error));
   await loadRemoteState(); showToast("Gruppe geändert");
 });
+
+document.querySelector("#members-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-delete-member]");
+  if (!button || !isAdmin) return;
+  const member = organizationMembers.find((item) => item.user_id === button.dataset.deleteMember);
+  if (!member || !confirm(`${member.profile?.display_name || "Dieses Mitglied"} aus dem Bereich entfernen?`)) return;
+  const result = await supabaseClient.rpc("delete_member", { p_org: activeOrganizationId, p_user: button.dataset.deleteMember });
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  await loadRemoteState(); showToast("Mitglied entfernt");
+});
+
+document.querySelector("#groups-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-delete-group]");
+  if (!button || !isAdmin) return;
+  const group = organizationGroups.find((item) => item.id === button.dataset.deleteGroup);
+  if (!group || !confirm(`Gruppe „${group.name}“ löschen? Mitglieder bleiben im Bereich.`)) return;
+  const result = await supabaseClient.rpc("delete_org_group", { p_org: activeOrganizationId, p_group: button.dataset.deleteGroup });
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  await loadRemoteState(); showToast("Gruppe gelöscht");
+});
+
+document.querySelector("#delete-workspace-button").addEventListener("click", async () => {
+  if (!isAdmin || !activeOrganizationId) return showToast("Nur für Administratoren");
+  const active = organizations.find((item) => item.organization_id === activeOrganizationId);
+  if (!confirm(`Aktiven Bereich „${active?.organizations?.name || "Bereich"}“ wirklich löschen? Alle Daten dieses Bereichs werden entfernt.`)) return;
+  const result = await supabaseClient.rpc("delete_workspace", { p_org: activeOrganizationId });
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  localStorage.removeItem("cafe-daniels-active-org");
+  activeOrganizationId = "";
+  await loadOrganizations({ autoCreate: false });
+  if (organizations.length) {
+    activeOrganizationId = organizations[0].organization_id;
+    localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
+    await loadRemoteState();
+  } else {
+    entries = [];
+    adminEntries = [];
+    remoteBalance = null;
+    remoteBeerStock = null;
+    render();
+  }
+  showToast("Bereich gelöscht");
+});
+
+document.querySelector("#stats-user-filter").addEventListener("change", (event) => {
+  activeStatsUser = event.target.value;
+  renderStatistics();
+});
+
+document.querySelectorAll("[data-theme-choice]").forEach((button) => button.addEventListener("click", () => {
+  settings.theme = button.dataset.themeChoice;
+  persistSettings();
+  render();
+}));
 
 document.querySelectorAll("[data-period]").forEach((button) => button.addEventListener("click", () => {
   activePeriod = button.dataset.period;
