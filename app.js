@@ -471,7 +471,7 @@ document.querySelector("#deposit-form").addEventListener("submit", async (event)
   if (currentUser) {
     if (!activeOrganizationId) return showToast("Bitte zuerst einen aktiven Bereich erstellen");
     if (!navigator.onLine) return showToast("Einzahlung benötigt eine Verbindung");
-    const result = await supabaseClient.from("org_deposits").insert({ client_id: crypto.randomUUID(), organization_id: activeOrganizationId, user_id: currentUser.id, amount: Math.round(amount * 100) / 100 });
+    const result = await supabaseClient.rpc("add_org_deposit", { p_client: crypto.randomUUID(), p_org: activeOrganizationId, p_amount: Math.round(amount * 100) / 100 });
     if (result.error) { remoteStatusMessage = remoteErrorMessage(result.error); renderStatus(); return showToast(remoteStatusMessage); }
     remoteStatusMessage = "";
     event.target.reset(); await loadRemoteState(); return showToast("Guthaben eingezahlt");
@@ -486,7 +486,7 @@ document.querySelector("#stock-form").addEventListener("submit", async (event) =
   if (currentUser) {
     if (!isAdmin) return showToast("Nur für Administratoren");
     if (!navigator.onLine) return showToast("Lagerzugang benötigt eine Verbindung");
-    const result = await supabaseClient.from("org_stock_movements").insert({ organization_id: activeOrganizationId, beverage_id: remoteBeverageIds.get("Bier"), quantity: amount, note: "Lagerzugang", created_by: currentUser.id });
+    const result = await supabaseClient.rpc("add_org_stock", { p_org: activeOrganizationId, p_beverage: remoteBeverageIds.get("Bier"), p_quantity: amount, p_note: "Lagerzugang" });
     if (result.error) return showToast(remoteErrorMessage(result.error));
     event.target.reset(); await loadRemoteState(); return showToast("Globaler Bestand erhöht");
   }
@@ -502,7 +502,7 @@ document.querySelector("#beverage-form").addEventListener("submit", async (event
   if (settings.beverages.some((item) => item.toLocaleLowerCase("de") === name.toLocaleLowerCase("de"))) return showToast("Getränk ist bereits vorhanden");
   if (currentUser) {
     if (!isAdmin) return showToast("Nur für Administratoren");
-    const result = await supabaseClient.from("org_beverages").insert({ organization_id: activeOrganizationId, name, price: Math.round(price * 100) / 100 });
+    const result = await supabaseClient.rpc("upsert_org_beverage", { p_org: activeOrganizationId, p_name: name, p_price: Math.round(price * 100) / 100 });
     if (result.error) return showToast(remoteErrorMessage(result.error));
     event.target.reset(); await loadRemoteState(); beverageInput.value = name; updateCalculatedPrice(); return showToast("Getränk hinzugefügt");
   }
@@ -514,7 +514,7 @@ document.querySelector("#beverage-settings-list").addEventListener("click", asyn
   if (!button) return;
   if (currentUser) {
     if (!isAdmin) return showToast("Nur für Administratoren");
-    const result = await supabaseClient.from("org_beverages").update({ active: false }).eq("id", remoteBeverageIds.get(button.dataset.deleteBeverage));
+    const result = await supabaseClient.rpc("deactivate_org_beverage", { p_org: activeOrganizationId, p_beverage: remoteBeverageIds.get(button.dataset.deleteBeverage) });
     if (result.error) return showToast(remoteErrorMessage(result.error));
     await loadRemoteState(); return showToast("Getränk entfernt");
   }
@@ -530,7 +530,7 @@ document.querySelector("#beverage-settings-list").addEventListener("change", asy
   if (!Number.isFinite(price) || price <= 0) { renderBeverageSettings(); return showToast("Bitte gültigen Preis eingeben"); }
   if (currentUser) {
     if (!isAdmin) return showToast("Nur für Administratoren");
-    const result = await supabaseClient.from("org_beverages").update({ price: Math.round(price * 100) / 100 }).eq("id", remoteBeverageIds.get(input.dataset.priceBeverage));
+    const result = await supabaseClient.rpc("update_org_beverage_price", { p_org: activeOrganizationId, p_beverage: remoteBeverageIds.get(input.dataset.priceBeverage), p_price: Math.round(price * 100) / 100 });
     if (result.error) return showToast(remoteErrorMessage(result.error));
     await loadRemoteState(); return showToast("Globaler Preis gespeichert");
   }

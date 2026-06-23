@@ -145,6 +145,58 @@ as $$ declare v_bev org_beverages; v_balance numeric; v_row org_consumptions; be
   return v_row;
 end $$;
 
+create or replace function public.add_org_deposit(p_client text,p_org uuid,p_amount numeric)
+returns public.org_deposits language plpgsql security definer set search_path=public
+as $$ declare v_row org_deposits; begin
+  if not is_org_member(p_org) then raise exception 'Kein Mitglied'; end if;
+  if p_amount<=0 then raise exception 'Ungültiger Betrag'; end if;
+  insert into org_deposits(client_id,organization_id,user_id,amount)
+  values(p_client,p_org,auth.uid(),round(p_amount,2))
+  on conflict(client_id) do update set client_id=excluded.client_id returning * into v_row;
+  return v_row;
+end $$;
+
+create or replace function public.add_org_stock(p_org uuid,p_beverage uuid,p_quantity integer,p_note text default null)
+returns public.org_stock_movements language plpgsql security definer set search_path=public
+as $$ declare v_row org_stock_movements; begin
+  if not is_org_admin(p_org) then raise exception 'Nur für Administratoren'; end if;
+  if p_quantity<1 then raise exception 'Ungültige Menge'; end if;
+  if not exists(select 1 from org_beverages where id=p_beverage and organization_id=p_org and active) then raise exception 'Getränk nicht gefunden'; end if;
+  insert into org_stock_movements(organization_id,beverage_id,quantity,note,created_by)
+  values(p_org,p_beverage,p_quantity,p_note,auth.uid()) returning * into v_row;
+  return v_row;
+end $$;
+
+create or replace function public.upsert_org_beverage(p_org uuid,p_name text,p_price numeric)
+returns public.org_beverages language plpgsql security definer set search_path=public
+as $$ declare v_row org_beverages; begin
+  if not is_org_admin(p_org) then raise exception 'Nur für Administratoren'; end if;
+  if trim(p_name)='' or p_price<=0 then raise exception 'Name oder Preis ungültig'; end if;
+  insert into org_beverages(organization_id,name,price,active)
+  values(p_org,trim(p_name),round(p_price,2),true)
+  on conflict(organization_id,name) do update set price=excluded.price, active=true returning * into v_row;
+  return v_row;
+end $$;
+
+create or replace function public.update_org_beverage_price(p_org uuid,p_beverage uuid,p_price numeric)
+returns public.org_beverages language plpgsql security definer set search_path=public
+as $$ declare v_row org_beverages; begin
+  if not is_org_admin(p_org) then raise exception 'Nur für Administratoren'; end if;
+  if p_price<=0 then raise exception 'Preis ungültig'; end if;
+  update org_beverages set price=round(p_price,2) where id=p_beverage and organization_id=p_org returning * into v_row;
+  if not found then raise exception 'Getränk nicht gefunden'; end if;
+  return v_row;
+end $$;
+
+create or replace function public.deactivate_org_beverage(p_org uuid,p_beverage uuid)
+returns public.org_beverages language plpgsql security definer set search_path=public
+as $$ declare v_row org_beverages; begin
+  if not is_org_admin(p_org) then raise exception 'Nur für Administratoren'; end if;
+  update org_beverages set active=false where id=p_beverage and organization_id=p_org returning * into v_row;
+  if not found then raise exception 'Getränk nicht gefunden'; end if;
+  return v_row;
+end $$;
+
 alter table organizations enable row level security; alter table app_groups enable row level security;
 alter table memberships enable row level security; alter table invitations enable row level security;
 alter table org_beverages enable row level security; alter table org_stock_movements enable row level security;
@@ -173,4 +225,4 @@ create policy "org_consume_delete" on org_consumptions for delete to authenticat
 create policy "org_deposit_read" on org_deposits for select to authenticated using(user_id=auth.uid() or is_org_admin(organization_id));
 create policy "org_deposit_insert" on org_deposits for insert to authenticated with check(user_id=auth.uid() and is_org_member(organization_id));
 
-grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz) to authenticated;
+grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz),add_org_deposit(text,uuid,numeric),add_org_stock(uuid,uuid,integer,text),upsert_org_beverage(uuid,text,numeric),update_org_beverage_price(uuid,uuid,numeric),deactivate_org_beverage(uuid,uuid) to authenticated;
