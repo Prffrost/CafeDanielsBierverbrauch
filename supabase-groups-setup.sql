@@ -307,7 +307,23 @@ end $$;
 create or replace function public.delete_workspace(p_org uuid)
 returns void language plpgsql security definer set search_path=public
 as $$ begin
-  raise exception 'Aktive Bereiche können nicht gelöscht werden';
+  if not is_org_admin(p_org) then raise exception 'Nur für Administratoren'; end if;
+  delete from organizations where id=p_org;
+end $$;
+
+create or replace function public.set_member_admin_role(p_org uuid,p_user uuid,p_admin boolean)
+returns public.memberships language plpgsql security definer set search_path=public
+as $$ declare v_row memberships; v_admin_count integer; begin
+  if not is_org_admin(p_org) then raise exception 'Nur für Administratoren'; end if;
+  if p_user=auth.uid() then raise exception 'Du kannst deine eigene Admin-Rolle nicht ändern'; end if;
+  if not exists(select 1 from memberships where organization_id=p_org and user_id=p_user) then raise exception 'Mitglied nicht gefunden'; end if;
+  if not p_admin then
+    select count(*) into v_admin_count from memberships where organization_id=p_org and role='admin';
+    if v_admin_count<=1 then raise exception 'Mindestens ein Admin erforderlich'; end if;
+  end if;
+  update memberships set role=case when p_admin then 'admin' else 'member' end
+  where organization_id=p_org and user_id=p_user returning * into v_row;
+  return v_row;
 end $$;
 
 create or replace function public.reset_workspace_values(p_org uuid)
@@ -411,4 +427,4 @@ create policy "org_deposit_insert" on org_deposits for insert to authenticated w
 create policy "chat_group_read" on org_chat_messages for select to authenticated using(is_org_admin(organization_id) or exists(select 1 from org_member_groups where organization_id=org_chat_messages.organization_id and user_id=auth.uid() and group_id=org_chat_messages.group_id));
 create policy "member_groups_read" on org_member_groups for select to authenticated using(is_org_member(organization_id));
 
-grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz),add_org_deposit(text,uuid,numeric),admin_add_user_deposit(text,uuid,uuid,numeric),add_member_by_email(uuid,text,uuid),add_org_stock(uuid,uuid,integer,text),upsert_org_beverage(uuid,text,numeric,numeric),update_org_beverage_price(uuid,uuid,numeric),update_org_beverage_purchase_price(uuid,uuid,numeric),deactivate_org_beverage(uuid,uuid),create_org_group(uuid,text),update_member_group(uuid,uuid,uuid),delete_member(uuid,uuid),delete_org_group(uuid,uuid),delete_workspace(uuid),reset_workspace_values(uuid),send_group_chat_message(uuid,uuid,text),give_beer_to_user(text,uuid,uuid,uuid,integer,timestamptz),set_member_groups(uuid,uuid,uuid[]),delete_org_consumption(uuid,uuid) to authenticated;
+grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz),add_org_deposit(text,uuid,numeric),admin_add_user_deposit(text,uuid,uuid,numeric),add_member_by_email(uuid,text,uuid),add_org_stock(uuid,uuid,integer,text),upsert_org_beverage(uuid,text,numeric,numeric),update_org_beverage_price(uuid,uuid,numeric),update_org_beverage_purchase_price(uuid,uuid,numeric),deactivate_org_beverage(uuid,uuid),create_org_group(uuid,text),update_member_group(uuid,uuid,uuid),delete_member(uuid,uuid),delete_org_group(uuid,uuid),delete_workspace(uuid),reset_workspace_values(uuid),send_group_chat_message(uuid,uuid,text),give_beer_to_user(text,uuid,uuid,uuid,integer,timestamptz),set_member_groups(uuid,uuid,uuid[]),set_member_admin_role(uuid,uuid,boolean),delete_org_consumption(uuid,uuid) to authenticated;

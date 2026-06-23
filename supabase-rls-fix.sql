@@ -690,7 +690,47 @@ security definer
 set search_path=public
 as $$
 begin
-  raise exception 'Aktive Bereiche können nicht gelöscht werden';
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+
+  delete from public.organizations
+  where id=p_org;
+end
+$$;
+
+create or replace function public.set_member_admin_role(p_org uuid, p_user uuid, p_admin boolean)
+returns public.memberships
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_row public.memberships;
+  v_admin_count integer;
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+  if p_user=auth.uid() then
+    raise exception 'Du kannst deine eigene Admin-Rolle nicht ändern';
+  end if;
+  if not exists(select 1 from public.memberships where organization_id=p_org and user_id=p_user) then
+    raise exception 'Mitglied nicht gefunden';
+  end if;
+  if not p_admin then
+    select count(*) into v_admin_count from public.memberships where organization_id=p_org and role='admin';
+    if v_admin_count <= 1 then
+      raise exception 'Mindestens ein Admin erforderlich';
+    end if;
+  end if;
+
+  update public.memberships
+  set role=case when p_admin then 'admin' else 'member' end
+  where organization_id=p_org and user_id=p_user
+  returning * into v_row;
+
+  return v_row;
 end
 $$;
 
@@ -820,3 +860,4 @@ create policy "org_deposit_insert" on public.org_deposits
 
 grant execute on function public.admin_add_user_deposit(text, uuid, uuid, numeric) to authenticated;
 grant execute on function public.add_member_by_email(uuid, text, uuid) to authenticated;
+grant execute on function public.set_member_admin_role(uuid, uuid, boolean) to authenticated;

@@ -44,6 +44,7 @@ const WORKSPACE_LIMIT = 10;
 const CHAT_LIMIT = 10;
 let selectedGroupId = localStorage.getItem("cafe-daniels-active-group") || "";
 let memberGroupLinks = [];
+let activeSettingsSection = localStorage.getItem("cafe-daniels-settings-section") || "locations";
 
 dateInput.value = localDateString(new Date());
 
@@ -432,6 +433,19 @@ function renderStatus() {
   workspaceSelect.disabled = !organizations.length;
 }
 
+function renderSettingsSections() {
+  const allowed = new Set(["locations", "members", "beverages", "qr", "general"]);
+  if (!allowed.has(activeSettingsSection)) activeSettingsSection = "locations";
+  if (REMOTE_ENABLED && !isAdmin && activeSettingsSection === "members") activeSettingsSection = "locations";
+  document.querySelectorAll("[data-settings-tab]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.settingsTab === activeSettingsSection);
+  });
+  document.querySelectorAll("[data-settings-section]").forEach((section) => {
+    const adminOnly = section.hasAttribute("data-admin-only") && REMOTE_ENABLED && !isAdmin;
+    section.hidden = adminOnly || section.dataset.settingsSection !== activeSettingsSection;
+  });
+}
+
 function renderOrganizationAdmin() {
   document.querySelector("#groups-list").innerHTML = organizationGroups.map((group) => `<div class="settings-row"><span>${escapeHTML(group.name)}</span><button type="button" data-delete-group="${group.id}" aria-label="Gruppe löschen"><svg class="icon"><use href="#icon-trash"/></svg></button></div>`).join("");
   document.querySelector("#invite-group").innerHTML = organizationGroups.map((group) => `<option value="${group.id}">${escapeHTML(group.name)}</option>`).join("");
@@ -439,7 +453,7 @@ function renderOrganizationAdmin() {
   document.querySelector("#members-list").innerHTML = organizationMembers.map((member) => {
     const isSelf = member.user_id === currentUser?.id;
     const groups = memberGroupIds(member.user_id);
-    return `<div class="member-row multi-member-row"><span>${escapeHTML(member.profile?.display_name || member.user_id)}${member.role === "admin" ? " · Admin" : ""}</span><div class="member-group-checks">${organizationGroups.map((group) => `<label><input type="checkbox" data-member-group-user="${member.user_id}" value="${group.id}" ${groups.includes(group.id) ? "checked" : ""} ${member.role === "admin" ? "disabled" : ""}>${escapeHTML(group.name)}</label>`).join("")}</div><button type="button" data-delete-member="${member.user_id}" ${isSelf || member.role === "admin" ? "disabled" : ""} aria-label="Mitglied entfernen"><svg class="icon"><use href="#icon-trash"/></svg></button></div>`;
+    return `<div class="member-row multi-member-row"><span>${escapeHTML(member.profile?.display_name || member.user_id)}</span><div class="member-group-checks"><label class="admin-check"><input type="checkbox" data-member-admin="${member.user_id}" ${member.role === "admin" ? "checked" : ""} ${isSelf ? "disabled" : ""}>Admin</label>${organizationGroups.map((group) => `<label><input type="checkbox" data-member-group-user="${member.user_id}" value="${group.id}" ${groups.includes(group.id) ? "checked" : ""}>${escapeHTML(group.name)}</label>`).join("")}</div><button type="button" data-delete-member="${member.user_id}" ${isSelf ? "disabled" : ""} aria-label="Mitglied entfernen"><svg class="icon"><use href="#icon-trash"/></svg></button></div>`;
   }).join("");
 }
 
@@ -587,6 +601,7 @@ function render() {
   updateCalculatedPrice();
   renderProfile();
   renderStatus();
+  renderSettingsSections();
   renderStatistics();
   renderBeverageSettings();
   renderTeam();
@@ -855,6 +870,43 @@ document.querySelector("#workspace-form").addEventListener("submit", async (even
   catch (error) { remoteStatusMessage = remoteErrorMessage(error); render(); showToast(remoteStatusMessage); }
 });
 
+document.querySelector("#delete-workspace-button")?.addEventListener("click", async () => {
+  if (!currentUser || !isAdmin || !activeOrganizationId) return showToast("Nur fÃ¼r Administratoren");
+  const active = organizations.find((item) => item.organization_id === activeOrganizationId);
+  const activeName = active?.organizations?.name || "Aktiver Standort";
+  const ok = confirm(`Lokal / Standort „${activeName}“ wirklich lÃ¶schen?\n\nAlle Mitglieder, Gruppen, GetrÃ¤nke, Lager, Guthaben, Verbrauch und Chat dieses Standorts werden gelÃ¶scht.`);
+  if (!ok) return;
+  const really = confirm("Bitte nochmal bestÃ¤tigen: Dieser Standort kann nicht automatisch wiederhergestellt werden.");
+  if (!really) return;
+  const result = await supabaseClient.rpc("delete_workspace", { p_org: activeOrganizationId });
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  localStorage.removeItem("cafe-daniels-active-org");
+  activeOrganizationId = "";
+  try {
+    await loadOrganizations(false);
+    if (activeOrganizationId) await loadRemoteState();
+    else {
+      entries = [];
+      adminEntries = [];
+      organizationGroups = [];
+      organizationMembers = [];
+      memberGroupLinks = [];
+      chatMessages = [];
+      isAdmin = false;
+    }
+  } catch {
+    entries = [];
+    adminEntries = [];
+    organizationGroups = [];
+    organizationMembers = [];
+    memberGroupLinks = [];
+    chatMessages = [];
+    isAdmin = false;
+  }
+  render();
+  showToast("Standort gelÃ¶scht");
+});
+
 document.querySelector("#reset-values-button")?.addEventListener("click", async () => {
   if (!currentUser || !isAdmin || !activeOrganizationId) return showToast("Nur für Administratoren");
   const active = organizations.find((item) => item.organization_id === activeOrganizationId);
@@ -963,6 +1015,16 @@ document.querySelector("#copy-invite").addEventListener("click", async () => {
 });
 
 document.querySelector("#members-list").addEventListener("change", async (event) => {
+  const adminCheckbox = event.target.closest("[data-member-admin]");
+  if (adminCheckbox && isAdmin) {
+    const member = organizationMembers.find((item) => item.user_id === adminCheckbox.dataset.memberAdmin);
+    if (!member) return;
+    const ok = confirm(`${member.profile?.display_name || member.user_id} ${adminCheckbox.checked ? "zum Admin machen" : "Admin-Rechte entfernen"}?`);
+    if (!ok) { adminCheckbox.checked = !adminCheckbox.checked; return; }
+    const result = await supabaseClient.rpc("set_member_admin_role", { p_org: activeOrganizationId, p_user: adminCheckbox.dataset.memberAdmin, p_admin: adminCheckbox.checked });
+    if (result.error) { await loadRemoteState(); return showToast(remoteErrorMessage(result.error)); }
+    await loadRemoteState(); return showToast("Admin-Rechte gespeichert");
+  }
   const checkbox = event.target.closest("[data-member-group-user]");
   if (!checkbox || !isAdmin) return;
   const checked = [...document.querySelectorAll(`[data-member-group-user="${checkbox.dataset.memberGroupUser}"]:checked`)].map((item) => item.value);
@@ -977,6 +1039,25 @@ document.querySelector("#team-group-select").addEventListener("change", async (e
   localStorage.setItem("cafe-daniels-active-group", selectedGroupId);
   await loadRemoteState();
   setActiveTab("team");
+});
+
+document.querySelectorAll("[data-settings-tab]").forEach((button) => {
+  button.addEventListener("click", () => {
+    activeSettingsSection = button.dataset.settingsTab;
+    localStorage.setItem("cafe-daniels-settings-section", activeSettingsSection);
+    renderSettingsSections();
+  });
+});
+
+document.querySelector("#print-beer-qr")?.addEventListener("click", () => {
+  const value = document.querySelector("#beer-qr-value").value;
+  const qrCanvas = document.querySelector("#beer-qr canvas");
+  const qrImg = document.querySelector("#beer-qr img");
+  const qrSrc = qrCanvas?.toDataURL("image/png") || qrImg?.src || "";
+  const popup = window.open("", "_blank", "width=420,height=620");
+  if (!popup) return showToast("Popup zum Drucken wurde blockiert");
+  popup.document.write(`<!doctype html><html><head><title>Bier QR</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;text-align:center}.card{border:2px solid #0b5ea8;border-radius:24px;padding:32px}h1{margin:0 0 8px;color:#0b5ea8}p{margin:0 0 24px;color:#555}img{width:260px;height:260px;image-rendering:pixelated}.code{margin-top:18px;font-size:12px;color:#777}@media print{button{display:none}.card{border:0}}</style></head><body><div class="card"><h1>Cafe Daniel - LA -</h1><p>1 Bier scannen</p>${qrSrc ? `<img src="${qrSrc}" alt="Bier QR">` : `<div>${value}</div>`}<div class="code">${value}</div><button onclick="window.print()">Drucken</button></div><script>window.onload=()=>setTimeout(()=>window.print(),250)<\/script></body></html>`);
+  popup.document.close();
 });
 
 document.querySelector("#members-list").addEventListener("click", async (event) => {
