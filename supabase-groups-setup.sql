@@ -38,6 +38,14 @@ create table if not exists public.invitations (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.org_member_groups (
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  group_id uuid not null references public.app_groups(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key(organization_id,user_id,group_id)
+);
+
 create table if not exists public.org_beverages (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
@@ -104,6 +112,7 @@ as $$ declare v_org uuid; v_group uuid; begin
   insert into organizations(name,created_by) values(trim(p_name),auth.uid()) returning id into v_org;
   insert into app_groups(organization_id,name) values(v_org,'Mitglieder') returning id into v_group;
   insert into memberships(organization_id,user_id,group_id,role) values(v_org,auth.uid(),v_group,'admin');
+  insert into org_member_groups(organization_id,user_id,group_id) values(v_org,auth.uid(),v_group) on conflict do nothing;
   insert into org_beverages(organization_id,name,price) values(v_org,'Bier',3.50),(v_org,'Spezi',3.00),(v_org,'Cola',3.00),(v_org,'Wein',4.50);
   return v_org;
 end $$;
@@ -128,6 +137,7 @@ as $$ declare v_inv invitations; v_email text; begin
   if v_inv.email is not null and lower(v_email)<>lower(v_inv.email) then raise exception 'Einladung gehört zu einer anderen E-Mail-Adresse'; end if;
   insert into memberships(organization_id,user_id,group_id,role) values(v_inv.organization_id,auth.uid(),v_inv.group_id,'member')
   on conflict(organization_id,user_id) do update set group_id=excluded.group_id;
+  insert into org_member_groups(organization_id,user_id,group_id) values(v_inv.organization_id,auth.uid(),v_inv.group_id) on conflict do nothing;
   update invitations set accepted_by=auth.uid(),accepted_at=now() where id=v_inv.id;
   return v_inv.organization_id;
 end $$;
@@ -269,8 +279,7 @@ end $$;
 create or replace function public.delete_workspace(p_org uuid)
 returns void language plpgsql security definer set search_path=public
 as $$ begin
-  if not is_org_admin(p_org) then raise exception 'Nur für Administratoren'; end if;
-  delete from organizations where id=p_org;
+  raise exception 'Aktive Bereiche können nicht gelöscht werden';
 end $$;
 
 create or replace function public.send_group_chat_message(p_org uuid,p_group uuid,p_message text)
@@ -278,7 +287,7 @@ returns public.org_chat_messages language plpgsql security definer set search_pa
 as $$ declare v_row org_chat_messages; begin
   if not is_org_member(p_org) then raise exception 'Kein Mitglied'; end if;
   if not exists(select 1 from app_groups where id=p_group and organization_id=p_org) then raise exception 'Gruppe nicht gefunden'; end if;
-  if not is_org_admin(p_org) and not exists(select 1 from memberships where organization_id=p_org and user_id=auth.uid() and group_id=p_group) then raise exception 'Nicht in dieser Gruppe'; end if;
+  if not is_org_admin(p_org) and not exists(select 1 from org_member_groups where organization_id=p_org and user_id=auth.uid() and group_id=p_group) then raise exception 'Nicht in dieser Gruppe'; end if;
   if length(trim(p_message))<1 or length(trim(p_message))>500 then raise exception 'Nachricht ungültig'; end if;
   insert into org_chat_messages(organization_id,group_id,user_id,message)
   values(p_org,p_group,auth.uid(),trim(p_message)) returning * into v_row;
@@ -291,9 +300,8 @@ as $$ declare v_bev org_beverages; v_sender_group uuid; v_receiver_group uuid; v
   if not is_org_member(p_org) then raise exception 'Kein Mitglied'; end if;
   if p_to_user=auth.uid() then raise exception 'Du kannst dir nicht selbst Bier ausgeben'; end if;
   if p_quantity<1 then raise exception 'Ungültige Menge'; end if;
-  select group_id into v_sender_group from memberships where organization_id=p_org and user_id=auth.uid();
-  select group_id into v_receiver_group from memberships where organization_id=p_org and user_id=p_to_user;
-  if v_receiver_group is null or v_sender_group is distinct from v_receiver_group then raise exception 'Benutzer ist nicht in deiner Gruppe'; end if;
+  select mg.group_id into v_sender_group from org_member_groups mg where mg.organization_id=p_org and mg.user_id=auth.uid() and exists(select 1 from org_member_groups rg where rg.organization_id=p_org and rg.user_id=p_to_user and rg.group_id=mg.group_id) limit 1;
+  if v_sender_group is null then raise exception 'Benutzer ist nicht in deiner Gruppe'; end if;
   select * into v_bev from org_beverages where id=p_beverage and organization_id=p_org and name='Bier' and active for update;
   if not found then raise exception 'Bier nicht gefunden'; end if;
   select coalesce((select sum(amount) from org_deposits where organization_id=p_org and user_id=auth.uid()),0)-
@@ -307,11 +315,36 @@ as $$ declare v_bev org_beverages; v_sender_group uuid; v_receiver_group uuid; v
   return v_row;
 end $$;
 
+create or replace function public.set_member_groups(p_org uuid,p_user uuid,p_groups uuid[])
+returns void language plpgsql security definer set search_path=public
+as $$ begin
+  if not is_org_admin(p_org) then raise exception 'Nur für Administratoren'; end if;
+  if not exists(select 1 from memberships where organization_id=p_org and user_id=p_user and role<>'admin') then raise exception 'Mitglied nicht gefunden oder geschützt'; end if;
+  if coalesce(array_length(p_groups,1),0)<1 then raise exception 'Mindestens eine Gruppe erforderlich'; end if;
+  if exists(select 1 from unnest(p_groups) as g(id) where not exists(select 1 from app_groups where id=g.id and organization_id=p_org)) then raise exception 'Ungültige Gruppe'; end if;
+  delete from org_member_groups where organization_id=p_org and user_id=p_user;
+  insert into org_member_groups(organization_id,user_id,group_id) select p_org,p_user,id from unnest(p_groups) as g(id) on conflict do nothing;
+  update memberships set group_id=p_groups[1] where organization_id=p_org and user_id=p_user;
+end $$;
+
+create or replace function public.delete_org_consumption(p_org uuid,p_consumption uuid)
+returns void language plpgsql security definer set search_path=public
+as $$ declare v_row org_consumptions; begin
+  select * into v_row from org_consumptions where id=p_consumption and organization_id=p_org;
+  if not found then raise exception 'Eintrag nicht gefunden'; end if;
+  if not is_org_admin(p_org) then
+    if v_row.user_id<>auth.uid() then raise exception 'Nur eigene Einträge löschbar'; end if;
+    if v_row.created_at<now()-interval '5 minutes' then raise exception 'Nur 5 Minuten löschbar'; end if;
+  end if;
+  delete from org_consumptions where id=p_consumption and organization_id=p_org;
+end $$;
+
 alter table organizations enable row level security; alter table app_groups enable row level security;
 alter table memberships enable row level security; alter table invitations enable row level security;
 alter table org_beverages enable row level security; alter table org_stock_movements enable row level security;
 alter table org_consumptions enable row level security; alter table org_deposits enable row level security;
 alter table org_chat_messages enable row level security;
+alter table org_member_groups enable row level security;
 
 drop policy if exists "org_read" on organizations; drop policy if exists "groups_read" on app_groups;
 drop policy if exists "groups_admin" on app_groups; drop policy if exists "members_read" on memberships;
@@ -321,6 +354,7 @@ drop policy if exists "org_stock_read" on org_stock_movements; drop policy if ex
 drop policy if exists "org_consume_read" on org_consumptions; drop policy if exists "org_consume_delete" on org_consumptions;
 drop policy if exists "org_deposit_read" on org_deposits; drop policy if exists "org_deposit_insert" on org_deposits;
 drop policy if exists "chat_group_read" on org_chat_messages;
+drop policy if exists "member_groups_read" on org_member_groups;
 
 create policy "org_read" on organizations for select to authenticated using(is_org_member(id));
 create policy "groups_read" on app_groups for select to authenticated using(is_org_member(organization_id));
@@ -333,9 +367,10 @@ create policy "org_bev_admin" on org_beverages for all to authenticated using(is
 create policy "org_stock_read" on org_stock_movements for select to authenticated using(is_org_member(organization_id));
 create policy "org_stock_admin" on org_stock_movements for insert to authenticated with check(is_org_admin(organization_id) and created_by=auth.uid());
 create policy "org_consume_read" on org_consumptions for select to authenticated using(user_id=auth.uid() or is_org_admin(organization_id));
-create policy "org_consume_delete" on org_consumptions for delete to authenticated using(user_id=auth.uid() or is_org_admin(organization_id));
+create policy "org_consume_delete" on org_consumptions for delete to authenticated using(is_org_admin(organization_id) or (user_id=auth.uid() and created_at>=now()-interval '5 minutes'));
 create policy "org_deposit_read" on org_deposits for select to authenticated using(user_id=auth.uid() or is_org_admin(organization_id));
 create policy "org_deposit_insert" on org_deposits for insert to authenticated with check(user_id=auth.uid() and is_org_member(organization_id));
-create policy "chat_group_read" on org_chat_messages for select to authenticated using(is_org_admin(organization_id) or exists(select 1 from memberships where organization_id=org_chat_messages.organization_id and user_id=auth.uid() and group_id=org_chat_messages.group_id));
+create policy "chat_group_read" on org_chat_messages for select to authenticated using(is_org_admin(organization_id) or exists(select 1 from org_member_groups where organization_id=org_chat_messages.organization_id and user_id=auth.uid() and group_id=org_chat_messages.group_id));
+create policy "member_groups_read" on org_member_groups for select to authenticated using(is_org_member(organization_id));
 
-grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz),add_org_deposit(text,uuid,numeric),add_org_stock(uuid,uuid,integer,text),upsert_org_beverage(uuid,text,numeric,numeric),update_org_beverage_price(uuid,uuid,numeric),update_org_beverage_purchase_price(uuid,uuid,numeric),deactivate_org_beverage(uuid,uuid),create_org_group(uuid,text),update_member_group(uuid,uuid,uuid),delete_member(uuid,uuid),delete_org_group(uuid,uuid),delete_workspace(uuid),send_group_chat_message(uuid,uuid,text),give_beer_to_user(text,uuid,uuid,uuid,integer,timestamptz) to authenticated;
+grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz),add_org_deposit(text,uuid,numeric),add_org_stock(uuid,uuid,integer,text),upsert_org_beverage(uuid,text,numeric,numeric),update_org_beverage_price(uuid,uuid,numeric),update_org_beverage_purchase_price(uuid,uuid,numeric),deactivate_org_beverage(uuid,uuid),create_org_group(uuid,text),update_member_group(uuid,uuid,uuid),delete_member(uuid,uuid),delete_org_group(uuid,uuid),delete_workspace(uuid),send_group_chat_message(uuid,uuid,text),give_beer_to_user(text,uuid,uuid,uuid,integer,timestamptz),set_member_groups(uuid,uuid,uuid[]),delete_org_consumption(uuid,uuid) to authenticated;

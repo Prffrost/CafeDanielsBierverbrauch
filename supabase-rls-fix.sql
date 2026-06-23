@@ -30,6 +30,10 @@ begin
   insert into public.memberships(organization_id, user_id, group_id, role)
   values (v_org, auth.uid(), v_group, 'admin');
 
+  insert into public.org_member_groups(organization_id, user_id, group_id)
+  values (v_org, auth.uid(), v_group)
+  on conflict do nothing;
+
   insert into public.org_beverages(organization_id, name, price)
   values
     (v_org, 'Bier', 3.50),
@@ -414,7 +418,7 @@ using (
   public.is_org_admin(organization_id)
   or exists (
     select 1
-    from public.memberships
+    from public.org_member_groups
     where organization_id=org_chat_messages.organization_id
       and user_id=auth.uid()
       and group_id=org_chat_messages.group_id
@@ -438,7 +442,7 @@ begin
   end if;
   if not public.is_org_admin(p_org) and not exists(
     select 1
-    from public.memberships
+    from public.org_member_groups
     where organization_id=p_org and user_id=auth.uid() and group_id=p_group
   ) then
     raise exception 'Nicht in dieser Gruppe';
@@ -487,15 +491,13 @@ begin
     raise exception 'Ungültige Menge';
   end if;
 
-  select group_id into v_sender_group
-  from public.memberships
-  where organization_id=p_org and user_id=auth.uid();
+  select mg.group_id into v_sender_group
+  from public.org_member_groups mg
+  where mg.organization_id=p_org and mg.user_id=auth.uid()
+    and exists(select 1 from public.org_member_groups rg where rg.organization_id=p_org and rg.user_id=p_to_user and rg.group_id=mg.group_id)
+  limit 1;
 
-  select group_id into v_receiver_group
-  from public.memberships
-  where organization_id=p_org and user_id=p_to_user;
-
-  if v_receiver_group is null or v_sender_group is distinct from v_receiver_group then
+  if v_sender_group is null then
     raise exception 'Benutzer ist nicht in deiner Gruppe';
   end if;
 
@@ -532,3 +534,163 @@ end
 $$;
 
 grant execute on function public.give_beer_to_user(text, uuid, uuid, uuid, integer, timestamptz) to authenticated;
+
+create table if not exists public.org_member_groups (
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  group_id uuid not null references public.app_groups(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key(organization_id, user_id, group_id)
+);
+
+insert into public.org_member_groups(organization_id, user_id, group_id)
+select organization_id, user_id, group_id
+from public.memberships
+where group_id is not null
+on conflict do nothing;
+
+alter table public.org_member_groups enable row level security;
+
+drop policy if exists "member_groups_read" on public.org_member_groups;
+
+create policy "member_groups_read"
+on public.org_member_groups
+for select to authenticated
+using (public.is_org_member(organization_id));
+
+create or replace function public.set_member_groups(p_org uuid, p_user uuid, p_groups uuid[])
+returns void
+language plpgsql
+security definer
+set search_path=public
+as $$
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+  if not exists(select 1 from public.memberships where organization_id=p_org and user_id=p_user and role <> 'admin') then
+    raise exception 'Mitglied nicht gefunden oder geschützt';
+  end if;
+  if coalesce(array_length(p_groups,1),0) < 1 then
+    raise exception 'Mindestens eine Gruppe erforderlich';
+  end if;
+  if exists(
+    select 1
+    from unnest(p_groups) as g(id)
+    where not exists(select 1 from public.app_groups where id=g.id and organization_id=p_org)
+  ) then
+    raise exception 'Ungültige Gruppe';
+  end if;
+
+  delete from public.org_member_groups
+  where organization_id=p_org and user_id=p_user;
+
+  insert into public.org_member_groups(organization_id,user_id,group_id)
+  select p_org,p_user,id
+  from unnest(p_groups) as g(id)
+  on conflict do nothing;
+
+  update public.memberships
+  set group_id=p_groups[1]
+  where organization_id=p_org and user_id=p_user;
+end
+$$;
+
+create or replace function public.delete_org_consumption(p_org uuid, p_consumption uuid)
+returns void
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_row public.org_consumptions;
+begin
+  select * into v_row
+  from public.org_consumptions
+  where id=p_consumption and organization_id=p_org;
+
+  if not found then
+    raise exception 'Eintrag nicht gefunden';
+  end if;
+
+  if not public.is_org_admin(p_org) then
+    if v_row.user_id <> auth.uid() then
+      raise exception 'Nur eigene Einträge löschbar';
+    end if;
+    if v_row.created_at < now() - interval '5 minutes' then
+      raise exception 'Nur 5 Minuten löschbar';
+    end if;
+  end if;
+
+  delete from public.org_consumptions
+  where id=p_consumption and organization_id=p_org;
+end
+$$;
+
+grant execute on function public.set_member_groups(uuid, uuid, uuid[]) to authenticated;
+grant execute on function public.delete_org_consumption(uuid, uuid) to authenticated;
+
+create or replace function public.accept_invitation(p_token text)
+returns uuid
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_inv public.invitations;
+  v_email text;
+begin
+  if auth.uid() is null then
+    raise exception 'Nicht angemeldet';
+  end if;
+
+  select email into v_email from auth.users where id=auth.uid();
+  select * into v_inv
+  from public.invitations
+  where token=p_token and accepted_at is null and expires_at>now()
+  for update;
+
+  if not found then
+    raise exception 'Einladung ungültig oder abgelaufen';
+  end if;
+  if v_inv.email is not null and lower(v_email)<>lower(v_inv.email) then
+    raise exception 'Einladung gehört zu einer anderen E-Mail-Adresse';
+  end if;
+
+  insert into public.memberships(organization_id,user_id,group_id,role)
+  values(v_inv.organization_id,auth.uid(),v_inv.group_id,'member')
+  on conflict(organization_id,user_id) do update set group_id=excluded.group_id;
+
+  insert into public.org_member_groups(organization_id,user_id,group_id)
+  values(v_inv.organization_id,auth.uid(),v_inv.group_id)
+  on conflict do nothing;
+
+  update public.invitations
+  set accepted_by=auth.uid(),accepted_at=now()
+  where id=v_inv.id;
+
+  return v_inv.organization_id;
+end
+$$;
+
+grant execute on function public.accept_invitation(text) to authenticated;
+
+drop policy if exists "org_consume_delete" on public.org_consumptions;
+create policy "org_consume_delete"
+on public.org_consumptions
+for delete to authenticated
+using (
+  public.is_org_admin(organization_id)
+  or (user_id=auth.uid() and created_at >= now() - interval '5 minutes')
+);
+
+create or replace function public.delete_workspace(p_org uuid)
+returns void
+language plpgsql
+security definer
+set search_path=public
+as $$
+begin
+  raise exception 'Aktive Bereiche können nicht gelöscht werden';
+end
+$$;

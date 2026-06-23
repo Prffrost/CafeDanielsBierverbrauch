@@ -26,6 +26,7 @@ let currentUser = null;
 let currentProfile = null;
 let isAdmin = false;
 let remoteBeerStock = null;
+let remoteStockByBeverage = new Map();
 let remoteBalance = null;
 let remoteBeverageIds = new Map();
 let organizations = [];
@@ -40,6 +41,8 @@ let scannerFrame = 0;
 let chatMessages = [];
 const WORKSPACE_LIMIT = 10;
 const CHAT_LIMIT = 10;
+let selectedGroupId = localStorage.getItem("cafe-daniels-active-group") || "";
+let memberGroupLinks = [];
 
 dateInput.value = localDateString(new Date());
 
@@ -112,7 +115,21 @@ function activeMembership() {
 }
 
 function activeGroupId() {
-  return activeMembership()?.group_id || organizationMembers.find((member) => member.user_id === currentUser?.id)?.group_id || null;
+  const available = availableGroupsForCurrentUser();
+  if (selectedGroupId && available.some((group) => group.id === selectedGroupId)) return selectedGroupId;
+  return available[0]?.id || activeMembership()?.group_id || organizationMembers.find((member) => member.user_id === currentUser?.id)?.group_id || null;
+}
+
+function memberGroupIds(userId) {
+  const linked = memberGroupLinks.filter((link) => link.user_id === userId).map((link) => link.group_id);
+  const member = organizationMembers.find((item) => item.user_id === userId);
+  return [...new Set([...linked, member?.group_id].filter(Boolean))];
+}
+
+function availableGroupsForCurrentUser() {
+  if (isAdmin) return organizationGroups;
+  const ids = memberGroupIds(currentUser?.id);
+  return organizationGroups.filter((group) => ids.includes(group.id));
 }
 
 function visibleOrganizations() {
@@ -263,12 +280,18 @@ async function loadRemoteState() {
   if (currentProfile?.display_name) settings.profileName = currentProfile.display_name;
   organizationGroups = groupResult.data;
   organizationMembers = memberResult.data;
+  const memberGroupResult = await supabaseClient.from("org_member_groups").select("user_id,group_id").eq("organization_id", activeOrganizationId);
+  memberGroupLinks = memberGroupResult.error ? organizationMembers.filter((member) => member.group_id).map((member) => ({ user_id: member.user_id, group_id: member.group_id })) : memberGroupResult.data;
   if (organizationMembers.length) {
     const profileList = await supabaseClient.from("profiles").select("id,display_name").in("id", organizationMembers.map((item) => item.user_id));
     if (!profileList.error) organizationMembers = organizationMembers.map((item) => ({ ...item, profile: profileList.data.find((profile) => profile.id === item.user_id) }));
   }
   chatMessages = [];
   const groupId = activeGroupId();
+  if (groupId) {
+    selectedGroupId = groupId;
+    localStorage.setItem("cafe-daniels-active-group", groupId);
+  }
   if (groupId) {
     const chatResult = await supabaseClient.from("org_chat_messages").select("id,user_id,group_id,message,created_at").eq("organization_id", activeOrganizationId).eq("group_id", groupId).order("created_at", { ascending: false }).limit(CHAT_LIMIT);
     if (!chatResult.error) chatMessages = chatResult.data.reverse();
@@ -295,11 +318,12 @@ async function loadRemoteState() {
     }
   }
   const beerId = remoteBeverageIds.get("Bier");
-  if (beerId) {
-    const stockResult = await supabaseClient.rpc("get_org_stock", { p_org: activeOrganizationId, p_beverage: beerId });
-    if (stockResult.error) throw stockResult.error;
-    remoteBeerStock = Number(stockResult.data) || 0;
+  remoteStockByBeverage = new Map();
+  for (const [name, beverageId] of remoteBeverageIds.entries()) {
+    const stockResult = await supabaseClient.rpc("get_org_stock", { p_org: activeOrganizationId, p_beverage: beverageId });
+    if (!stockResult.error) remoteStockByBeverage.set(name, Number(stockResult.data) || 0);
   }
+  remoteBeerStock = beerId ? (remoteStockByBeverage.get("Bier") || 0) : null;
   persistSettings(); persistEntries(); render(); renderOrganizationAdmin(); renderTeam();
 }
 
@@ -382,6 +406,7 @@ function renderStatus() {
   document.querySelector("#settings-balance").textContent = currency(balance);
   document.querySelector("#quick-stock").textContent = `${stock} Fl.`;
   document.querySelector("#settings-stock").textContent = stock;
+  document.querySelector("#settings-stock-label").textContent = "Bier";
   document.querySelector("#account-email").textContent = currentUser?.email || "Lokaler Modus";
   document.querySelector("#account-role").textContent = currentUser ? (remoteStatusMessage || (!organizations.length ? "Noch kein Bereich eingerichtet" : (isAdmin ? "Administrator · synchronisiert" : "Benutzer · synchronisiert"))) : "Keine Serververbindung";
   document.querySelector("#sync-dot").classList.toggle("online", Boolean(currentUser && navigator.onLine));
@@ -391,7 +416,6 @@ function renderStatus() {
   workspaceSelect.innerHTML = visibleOrganizations().map((item) => `<option value="${item.organization_id}">${escapeHTML(item.organizations.name)}</option>`).join("");
   workspaceSelect.value = activeOrganizationId;
   workspaceSelect.disabled = !organizations.length;
-  document.querySelector("#delete-workspace-button").hidden = !isAdmin || !activeOrganizationId;
 }
 
 function renderOrganizationAdmin() {
@@ -399,14 +423,20 @@ function renderOrganizationAdmin() {
   document.querySelector("#invite-group").innerHTML = organizationGroups.map((group) => `<option value="${group.id}">${escapeHTML(group.name)}</option>`).join("");
   document.querySelector("#members-list").innerHTML = organizationMembers.map((member) => {
     const isSelf = member.user_id === currentUser?.id;
-    return `<div class="member-row"><span>${escapeHTML(member.profile?.display_name || member.user_id)}${member.role === "admin" ? " · Admin" : ""}</span><select data-member-user="${member.user_id}" ${member.role === "admin" ? "disabled" : ""}>${organizationGroups.map((group) => `<option value="${group.id}" ${group.id === member.group_id ? "selected" : ""}>${escapeHTML(group.name)}</option>`).join("")}</select><button type="button" data-delete-member="${member.user_id}" ${isSelf || member.role === "admin" ? "disabled" : ""} aria-label="Mitglied entfernen"><svg class="icon"><use href="#icon-trash"/></svg></button></div>`;
+    const groups = memberGroupIds(member.user_id);
+    return `<div class="member-row multi-member-row"><span>${escapeHTML(member.profile?.display_name || member.user_id)}${member.role === "admin" ? " · Admin" : ""}</span><div class="member-group-checks">${organizationGroups.map((group) => `<label><input type="checkbox" data-member-group-user="${member.user_id}" value="${group.id}" ${groups.includes(group.id) ? "checked" : ""} ${member.role === "admin" ? "disabled" : ""}>${escapeHTML(group.name)}</label>`).join("")}</div><button type="button" data-delete-member="${member.user_id}" ${isSelf || member.role === "admin" ? "disabled" : ""} aria-label="Mitglied entfernen"><svg class="icon"><use href="#icon-trash"/></svg></button></div>`;
   }).join("");
 }
 
 function renderTeam() {
   const groupId = activeGroupId();
   const group = organizationGroups.find((item) => item.id === groupId);
-  const members = groupId ? organizationMembers.filter((member) => member.group_id === groupId) : organizationMembers;
+  const availableGroups = availableGroupsForCurrentUser();
+  const switcher = document.querySelector("#team-group-select");
+  switcher.innerHTML = availableGroups.length ? availableGroups.map((item) => `<option value="${item.id}">${escapeHTML(item.name)}</option>`).join("") : '<option value="">Keine Gruppe</option>';
+  switcher.value = groupId || "";
+  switcher.disabled = availableGroups.length < 2;
+  const members = groupId ? organizationMembers.filter((member) => memberGroupIds(member.user_id).includes(groupId)) : organizationMembers;
   const groupName = group?.name || (currentUser ? "Keine Gruppe zugeordnet" : "Lokaler Modus");
   document.querySelector("#team-group-name").textContent = groupName;
   document.querySelector("#team-members-list").innerHTML = members.length
@@ -507,6 +537,15 @@ function renderBeverageSettings() {
     beerQr.innerHTML = "";
     new window.QRCode(beerQr, { text: document.querySelector("#beer-qr-value").value, width: 180, height: 180 });
     beerQr.dataset.rendered = "1";
+  }
+  const stockSelect = document.querySelector("#stock-beverage");
+  if (stockSelect) stockSelect.innerHTML = settings.beverages.map((name) => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join("");
+  const stockList = document.querySelector("#stock-list");
+  if (stockList) {
+    stockList.innerHTML = settings.beverages.map((name) => {
+      const stock = remoteStockByBeverage.has(name) ? remoteStockByBeverage.get(name) : (name === "Bier" ? beerStock() : 0);
+      return `<div class="settings-row"><span>${escapeHTML(name)}</span><strong>${stock} Stk.</strong></div>`;
+    }).join("");
   }
 }
 
@@ -642,11 +681,12 @@ list.addEventListener("click", async (event) => {
   if (!button) return;
   const entry = entries.find((item) => item.id === button.dataset.deleteId);
   if (entry?.remoteId && currentUser && navigator.onLine) {
-    const result = await supabaseClient.from("org_consumptions").delete().eq("id", entry.remoteId);
+    const result = await supabaseClient.rpc("delete_org_consumption", { p_org: activeOrganizationId, p_consumption: entry.remoteId });
     if (result.error) return showToast(remoteErrorMessage(result.error));
     await loadRemoteState();
     return showToast("Eintrag gelöscht");
   }
+  if (entry && Date.now() - new Date(entry.createdAt).getTime() > 5 * 60 * 1000) return showToast("Nur 5 Minuten löschbar");
   entries = entries.filter((entry) => entry.id !== button.dataset.deleteId);
   persistEntries(); render(); showToast("Eintrag gelöscht");
 });
@@ -679,11 +719,12 @@ document.querySelector("#stock-form").addEventListener("submit", async (event) =
   if (currentUser) {
     if (!isAdmin) return showToast("Nur für Administratoren");
     if (!navigator.onLine) return showToast("Lagerzugang benötigt eine Verbindung");
-    const result = await supabaseClient.rpc("add_org_stock", { p_org: activeOrganizationId, p_beverage: remoteBeverageIds.get("Bier"), p_quantity: amount, p_note: "Lagerzugang" });
+    const beverageName = document.querySelector("#stock-beverage").value || "Bier";
+    const result = await supabaseClient.rpc("add_org_stock", { p_org: activeOrganizationId, p_beverage: remoteBeverageIds.get(beverageName), p_quantity: amount, p_note: "Lagerzugang" });
     if (result.error) return showToast(remoteErrorMessage(result.error));
     event.target.reset(); await loadRemoteState(); return showToast("Globaler Bestand erhöht");
   }
-  settings.beerStockAdded += amount; persistSettings(); event.target.reset(); render(); showToast("Bierbestand erhöht");
+  settings.beerStockAdded += amount; persistSettings(); event.target.reset(); render(); showToast("Bestand erhöht");
 });
 
 document.querySelector("#beverage-form").addEventListener("submit", async (event) => {
@@ -864,11 +905,20 @@ document.querySelector("#copy-invite").addEventListener("click", async () => {
 });
 
 document.querySelector("#members-list").addEventListener("change", async (event) => {
-  const select = event.target.closest("[data-member-user]");
-  if (!select || !isAdmin) return;
-  const result = await supabaseClient.rpc("update_member_group", { p_org: activeOrganizationId, p_user: select.dataset.memberUser, p_group: select.value });
+  const checkbox = event.target.closest("[data-member-group-user]");
+  if (!checkbox || !isAdmin) return;
+  const checked = [...document.querySelectorAll(`[data-member-group-user="${checkbox.dataset.memberGroupUser}"]:checked`)].map((item) => item.value);
+  if (!checked.length) { checkbox.checked = true; return showToast("Mindestens eine Gruppe wählen"); }
+  const result = await supabaseClient.rpc("set_member_groups", { p_org: activeOrganizationId, p_user: checkbox.dataset.memberGroupUser, p_groups: checked });
   if (result.error) return showToast(remoteErrorMessage(result.error));
-  await loadRemoteState(); showToast("Gruppe geändert");
+  await loadRemoteState(); showToast("Gruppen geändert");
+});
+
+document.querySelector("#team-group-select").addEventListener("change", async (event) => {
+  selectedGroupId = event.target.value;
+  localStorage.setItem("cafe-daniels-active-group", selectedGroupId);
+  await loadRemoteState();
+  setActiveTab("team");
 });
 
 document.querySelector("#members-list").addEventListener("click", async (event) => {
@@ -891,7 +941,7 @@ document.querySelector("#groups-list").addEventListener("click", async (event) =
   await loadRemoteState(); showToast("Gruppe gelöscht");
 });
 
-document.querySelector("#delete-workspace-button").addEventListener("click", async () => {
+document.querySelector("#delete-workspace-button")?.addEventListener("click", async () => {
   if (!isAdmin || !activeOrganizationId) return showToast("Nur für Administratoren");
   const active = organizations.find((item) => item.organization_id === activeOrganizationId);
   if (!confirm(`Aktiven Bereich „${active?.organizations?.name || "Bereich"}“ wirklich löschen? Alle Daten dieses Bereichs werden entfernt.`)) return;
