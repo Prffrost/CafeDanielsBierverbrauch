@@ -279,6 +279,20 @@ function financeSummary(period) {
   return summary;
 }
 
+function stockFillSummary(period) {
+  return stockExpenses.filter((item) => inFinancePeriod(item.date, period)).reduce((summary, item) => {
+    summary.quantity += item.quantity;
+    summary.expense += item.expense;
+    return summary;
+  }, { quantity: 0, expense: 0 });
+}
+
+function latestStockFill(name) {
+  return stockExpenses
+    .filter((item) => item.beverage === name)
+    .sort((a, b) => (b.createdAt || b.date).localeCompare(a.createdAt || a.date))[0] || null;
+}
+
 function renderBeverageChoices() {
   const selected = beverageInput.value || "Bier";
   beverageInput.innerHTML = settings.beverages.map((name) => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join("");
@@ -399,7 +413,7 @@ async function loadRemoteState() {
     .map((item) => {
       const beverage = item.org_beverages?.name || "";
       const unit = Number(item.purchase_price) || Number(item.org_beverages?.purchase_price) || settings.purchasePrices[beverage] || 0;
-      return { date: item.created_at.slice(0, 10), beverage, quantity: Number(item.quantity) || 0, unit, expense: (Number(item.quantity) || 0) * unit };
+      return { date: item.created_at.slice(0, 10), createdAt: item.created_at, beverage, quantity: Number(item.quantity) || 0, unit, expense: (Number(item.quantity) || 0) * unit };
     });
 
   const pending = entries.filter((entry) => entry.pending);
@@ -426,10 +440,13 @@ async function loadRemoteState() {
   }
   stockFinanceByBeverage = new Map();
   for (const name of settings.beverages) {
-    const expenses = stockExpenses.filter((item) => item.beverage === name).reduce((sum, item) => sum + item.expense, 0);
+    const latestFill = latestStockFill(name);
+    const expenses = latestFill ? latestFill.expense : 0;
     const source = isAdmin ? adminEntries : entries;
-    const income = source.filter((entry) => entry.beverage === name).reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0);
-    stockFinanceByBeverage.set(name, { expenses, income, balance: income - expenses });
+    const income = source
+      .filter((entry) => entry.beverage === name && (!latestFill || entry.date >= latestFill.date))
+      .reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0);
+    stockFinanceByBeverage.set(name, { expenses, income, balance: income - expenses, latestFill });
   }
   const beerId = remoteBeverageIds.get("Bier");
   remoteStockByBeverage = new Map();
@@ -720,19 +737,30 @@ function renderBeverageSettings() {
   if (depositSelect) depositSelect.innerHTML = organizationMembers.map((member) => `<option value="${member.user_id}">${escapeHTML(member.profile?.display_name || member.user_id)}</option>`).join("");
   const stockList = document.querySelector("#stock-list");
   if (stockList) {
-    stockList.innerHTML = settings.beverages.map((name) => {
+    const stockRows = settings.beverages.map((name) => {
       const stock = remoteStockByBeverage.has(name) ? remoteStockByBeverage.get(name) : (name === "Bier" ? beerStock() : 0);
       const finance = stockFinanceByBeverage.get(name) || { expenses: 0, income: 0, balance: 0 };
-      return `<div class="stock-finance-row"><div><strong>${escapeHTML(name)}</strong><span>${stock} Stk.</span></div><div><span>Einkauf</span><strong class="money-negative">-${currency(finance.expenses)}</strong></div><div><span>Einnahmen</span><strong>${currency(finance.income)}</strong></div><div><span>${finance.balance >= 0 ? "Guthaben" : "Offen"}</span><strong class="${finance.balance >= 0 ? "money-positive" : "money-negative"}">${finance.balance >= 0 ? "+" : ""}${currency(finance.balance)}</strong></div></div>`;
+      const fillInfo = finance.latestFill ? `${finance.latestFill.quantity} Stk. am ${shortDate(finance.latestFill.date)}` : "Noch keine Füllung";
+      return `<div class="stock-finance-row"><div><strong>${escapeHTML(name)}</strong><span>${stock} Stk. aktuell</span></div><div><span>Aktuelle Füllung</span><strong>${fillInfo}</strong></div><div><span>Einkauf</span><strong class="money-negative">-${currency(finance.expenses)}</strong></div><div><span>Einnahmen seit Füllung</span><strong>${currency(finance.income)}</strong></div><div><span>${finance.balance >= 0 ? "Guthaben" : "Offen"}</span><strong class="${finance.balance >= 0 ? "money-positive" : "money-negative"}">${finance.balance >= 0 ? "+" : ""}${currency(finance.balance)}</strong></div></div>`;
     }).join("");
+    const historyRows = stockExpenses
+      .slice()
+      .sort((a, b) => (b.createdAt || b.date).localeCompare(a.createdAt || a.date))
+      .slice(0, 10)
+      .map((item) => {
+        const time = new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(item.createdAt || `${item.date}T12:00:00`));
+        return `<div class="stock-history-row"><div><strong>${escapeHTML(item.beverage)}</strong><span>${time}</span></div><div><strong>${item.quantity} Stk.</strong><span>EK ${currency(item.unit)} / ${currency(item.expense)}</span></div></div>`;
+      }).join("");
+    stockList.innerHTML = `${stockRows}<div class="breakdown-heading"><h3>Letzte Lagerfüllungen</h3></div>${historyRows || '<p class="days-empty">Noch keine Lagerfüllung gespeichert.</p>'}`;
   }
   const financeList = document.querySelector("#beverage-finance-list");
   if (financeList) {
     const periods = [["day", "Täglich"], ["week", "Wöchentlich"], ["month", "Monatlich"], ["year", "Jährlich"]];
     financeList.innerHTML = periods.map(([period, label]) => {
       const value = financeSummary(period);
+      const fill = stockFillSummary(period);
       const profit = value.income - value.expense;
-      return `<div class="finance-row"><strong>${label}</strong><span>${value.quantity} Getränke</span><span>Einnahmen ${currency(value.income)}</span><span>Ausgaben ${currency(value.expense)}</span><span>Gewinn ${currency(profit)}</span></div>`;
+      return `<div class="finance-row"><strong>${label}</strong><span>${value.quantity} Getränke verkauft</span><span>${fill.quantity} Getränke eingefüllt</span><span>Einnahmen ${currency(value.income)}</span><span>Ausgaben ${currency(value.expense)}</span><span>Gewinn ${currency(profit)}</span></div>`;
     }).join("");
   }
 }
@@ -943,7 +971,8 @@ document.querySelector("#stock-form").addEventListener("submit", async (event) =
   const beverageName = document.querySelector("#stock-beverage").value || "Bier";
   if (beverageName === "Bier") settings.beerStockAdded += amount;
   settings.purchasePrices[beverageName] = Math.round(purchasePrice * 100) / 100;
-  stockExpenses.push({ date: localDateString(new Date()), beverage: beverageName, quantity: amount, unit: purchasePrice, expense: amount * purchasePrice });
+  const now = new Date();
+  stockExpenses.push({ date: localDateString(now), createdAt: now.toISOString(), beverage: beverageName, quantity: amount, unit: purchasePrice, expense: amount * purchasePrice });
   persistSettings(); event.target.reset(); render(); showToast("Bestand erhöht");
 });
 
