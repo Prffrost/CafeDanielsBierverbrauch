@@ -29,6 +29,7 @@ let isAdmin = false;
 let remoteBeerStock = null;
 let remoteStockByBeverage = new Map();
 let remoteBalance = null;
+let negativeLimit = 0;
 let remoteBeverageIds = new Map();
 let organizations = [];
 let activeOrganizationId = localStorage.getItem("cafe-daniels-active-org") || "";
@@ -172,6 +173,13 @@ function totalSpent() { return entries.reduce((sum, entry) => sum + entry.quanti
 function accountBalance() { return remoteBalance === null ? settings.deposits - totalSpent() : remoteBalance - entries.filter((entry) => entry.pending).reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0); }
 function beerConsumed() { return entries.filter((entry) => entry.beverage === "Bier").reduce((sum, entry) => sum + entry.quantity, 0); }
 function beerStock() { return remoteBeerStock === null ? settings.beerStockAdded - beerConsumed() : remoteBeerStock - entries.filter((entry) => entry.pending && entry.beverage === "Bier").reduce((sum, entry) => sum + entry.quantity, 0); }
+function currentBeverageStock(name) {
+  const pending = entries.filter((entry) => entry.pending && entry.beverage === name).reduce((sum, entry) => sum + entry.quantity, 0);
+  if (remoteStockByBeverage.has(name)) return remoteStockByBeverage.get(name) - pending;
+  if (name === "Bier") return beerStock();
+  return 0;
+}
+function allowedSpendingBalance() { return accountBalance() + (Number(negativeLimit) || 0); }
 
 function setActiveTab(tabName) {
   document.querySelectorAll("[data-tab-panel]").forEach((panel) => {
@@ -276,6 +284,8 @@ function renderBeverageChoices() {
   beverageInput.innerHTML = settings.beverages.map((name) => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join("");
   beverageInput.value = settings.beverages.includes(selected) ? selected : settings.beverages[0];
   document.querySelector("#fixed-unit-price").textContent = currency(settings.prices[beverageInput.value] || 0);
+  const currentStock = document.querySelector("#current-beverage-stock");
+  if (currentStock) currentStock.textContent = `${currentBeverageStock(beverageInput.value)} Stk.`;
 }
 
 function renderProfile() {
@@ -326,6 +336,7 @@ async function loadRemoteState() {
   if (!currentUser || !activeOrganizationId) return;
   const membership = organizations.find((item) => item.organization_id === activeOrganizationId);
   isAdmin = membership?.role === "admin";
+  negativeLimit = Number(membership?.organizations?.max_negative_balance) || 0;
   let [profileResult, firstBeverageResult, consumptionResult, depositResult, groupResult, memberResult] = await Promise.all([
     supabaseClient.from("profiles").select("display_name").eq("id", currentUser.id).single(),
     supabaseClient.from("org_beverages").select("id,name,price,purchase_price,active").eq("organization_id", activeOrganizationId).eq("active", true).order("name"),
@@ -444,8 +455,16 @@ async function syncPendingConsumptions() {
   await loadRemoteState();
 }
 
+async function fetchMemberships() {
+  let result = await supabaseClient.from("memberships").select("organization_id,group_id,role,organizations(id,name,max_negative_balance)").eq("user_id", currentUser.id);
+  if (result.error?.message?.includes("max_negative_balance")) {
+    result = await supabaseClient.from("memberships").select("organization_id,group_id,role,organizations(id,name)").eq("user_id", currentUser.id);
+  }
+  return result;
+}
+
 async function loadOrganizations({ autoCreate = true } = {}) {
-  let result = await supabaseClient.from("memberships").select("organization_id,group_id,role,organizations(id,name)").eq("user_id", currentUser.id);
+  let result = await fetchMemberships();
   if (result.error) throw result.error;
   organizations = result.data;
   const acceptedKey = `cafe-daniels-accepted-${INVITE_TOKEN}`;
@@ -454,7 +473,7 @@ async function loadOrganizations({ autoCreate = true } = {}) {
     if (accepted.error) throw accepted.error;
     localStorage.setItem(acceptedKey, "1");
     localStorage.removeItem("cafe-daniels-invite");
-    result = await supabaseClient.from("memberships").select("organization_id,group_id,role,organizations(id,name)").eq("user_id", currentUser.id);
+    result = await fetchMemberships();
     if (result.error) throw result.error;
     organizations = result.data;
   }
@@ -470,7 +489,7 @@ async function loadOrganizations({ autoCreate = true } = {}) {
     if (created.error) throw created.error;
     activeOrganizationId = created.data;
     localStorage.setItem("cafe-daniels-created-org", JSON.stringify({ id: created.data, name: workspaceName, userId: currentUser.id }));
-    const reload = await supabaseClient.from("memberships").select("organization_id,group_id,role,organizations(id,name)").eq("user_id", currentUser.id);
+    const reload = await fetchMemberships();
     if (reload.error) throw reload.error;
     organizations = reload.data;
     if (!organizations.length) organizations = [{ organization_id: created.data, group_id: null, role: "admin", organizations: { id: created.data, name: workspaceName } }];
@@ -521,6 +540,8 @@ function renderStatus() {
   document.querySelector("#quick-stock").textContent = `${stock} Fl.`;
   document.querySelector("#settings-stock").textContent = stock;
   document.querySelector("#settings-stock-label").textContent = "Bier";
+  const negativeInput = document.querySelector("#negative-limit");
+  if (negativeInput && document.activeElement !== negativeInput) negativeInput.value = (Number(negativeLimit) || 0).toFixed(2).replace(".", ",");
   document.querySelector("#account-email").textContent = currentUser?.email || "Lokaler Modus";
   document.querySelector("#account-role").textContent = currentUser ? (remoteStatusMessage || (!organizations.length ? "Noch kein Lokal eingerichtet" : (isAdmin ? "Administrator · synchronisiert" : "Benutzer · synchronisiert"))) : "Keine Serververbindung";
   document.querySelector("#sync-dot").classList.toggle("online", Boolean(currentUser && navigator.onLine));
@@ -721,6 +742,8 @@ function updateCalculatedPrice() {
   const price = settings.prices[beverageInput.value] || 0;
   document.querySelector("#fixed-unit-price").textContent = currency(price);
   document.querySelector("#calculated-price").textContent = currency(quantity * price);
+  const currentStock = document.querySelector("#current-beverage-stock");
+  if (currentStock) currentStock.textContent = `${currentBeverageStock(beverageInput.value)} Stk.`;
 }
 
 function render() {
@@ -832,8 +855,8 @@ form.addEventListener("submit", async (event) => {
   const unitPrice = settings.prices[beverage];
   const total = quantity * unitPrice;
   if (!Number.isInteger(quantity) || quantity < 1 || !Number.isFinite(unitPrice) || unitPrice <= 0) return showToast("Bitte gültige Werte eingeben");
-  if (total > accountBalance() + 0.001) return showToast("Guthaben reicht nicht aus");
-  if (beverage === "Bier" && quantity > beerStock()) return showToast("Nicht genügend Bier im Lager");
+  if (total > allowedSpendingBalance() + 0.001) return showToast("Guthaben-/Minuslimit reicht nicht aus");
+  if (quantity > currentBeverageStock(beverage)) return showToast("Nicht genügend Bestand im Lager");
   const newEntry = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, date: dateInput.value, beverage, quantity, unitPrice: Math.round(unitPrice * 100) / 100, createdAt: new Date().toISOString() };
   if (currentUser && navigator.onLine) {
     const result = await supabaseClient.rpc("record_org_consumption", { p_client: newEntry.id, p_org: activeOrganizationId, p_beverage: remoteBeverageIds.get(beverage), p_quantity: quantity, p_at: `${dateInput.value}T12:00:00.000Z` });
@@ -884,6 +907,21 @@ document.querySelector("#deposit-form").addEventListener("submit", async (event)
     event.target.reset(); await loadRemoteState(); return showToast("Guthaben eingezahlt");
   }
   settings.deposits += Math.round(amount * 100) / 100; persistSettings(); event.target.reset(); render(); showToast("Guthaben eingezahlt");
+});
+
+document.querySelector("#negative-limit-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const limit = parsePrice(document.querySelector("#negative-limit").value || "0");
+  if (!Number.isFinite(limit) || limit < 0) return showToast("Bitte gültiges Minuslimit eingeben");
+  if (!currentUser || !activeOrganizationId) return showToast("Bitte zuerst anmelden");
+  if (!isAdmin) return showToast("Nur Admin kann das Minuslimit ändern");
+  const result = await supabaseClient.rpc("set_org_negative_limit", { p_org: activeOrganizationId, p_limit: Math.round(limit * 100) / 100 });
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  negativeLimit = Math.round(limit * 100) / 100;
+  organizations = organizations.map((item) => item.organization_id === activeOrganizationId ? { ...item, organizations: { ...item.organizations, max_negative_balance: negativeLimit } } : item);
+  await loadOrganizations({ autoCreate: false });
+  await loadRemoteState();
+  showToast("Minuslimit gespeichert");
 });
 
 document.querySelector("#stock-form").addEventListener("submit", async (event) => {
@@ -997,7 +1035,7 @@ document.querySelector("#profile-form").addEventListener("submit", async (event)
 document.querySelector("#workspace-select").addEventListener("change", async (event) => {
   activeOrganizationId = event.target.value;
   localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
-  remoteBeerStock = null; remoteBalance = null;
+  remoteBeerStock = null; remoteBalance = null; negativeLimit = 0;
   try { await loadRemoteState(); await syncPendingConsumptions(); showToast("Lokal gewechselt"); }
   catch (error) { showToast(remoteErrorMessage(error)); }
 });
@@ -1007,7 +1045,7 @@ document.querySelector("#workspace-list")?.addEventListener("click", async (even
   if (switchButton) {
     activeOrganizationId = switchButton.dataset.switchWorkspace;
     localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
-    remoteBeerStock = null; remoteBalance = null;
+    remoteBeerStock = null; remoteBalance = null; negativeLimit = 0;
     try { await loadRemoteState(); await syncPendingConsumptions(); showToast("Lokal gewechselt"); }
     catch (error) { showToast(remoteErrorMessage(error)); }
     return;
@@ -1087,6 +1125,7 @@ document.querySelector("#reset-values-button")?.addEventListener("click", async 
   adminEntries = [];
   chatMessages = [];
   remoteBalance = null;
+  negativeLimit = 0;
   remoteBeerStock = null;
   remoteStockByBeverage = new Map();
   persistEntries();
@@ -1214,7 +1253,7 @@ document.querySelector("#give-beer-form").addEventListener("submit", async (even
   const beerPrice = settings.prices.Bier || 0;
   if (!receiver) return showToast("Bitte Benutzer auswählen");
   if (!beerId || !Number.isInteger(quantity) || quantity < 1) return showToast("Bier nicht verfügbar");
-  if (quantity * beerPrice > accountBalance() + 0.001) return showToast("Guthaben reicht nicht aus");
+  if (quantity * beerPrice > allowedSpendingBalance() + 0.001) return showToast("Guthaben-/Minuslimit reicht nicht aus");
   if (quantity > beerStock()) return showToast("Nicht genügend Bier im Lager");
   const result = await supabaseClient.rpc("give_beer_to_user", { p_client: crypto.randomUUID(), p_org: activeOrganizationId, p_to_user: receiver, p_beverage: beerId, p_quantity: quantity, p_at: `${dateInput.value}T12:00:00.000Z` });
   if (result.error) return showToast(remoteErrorMessage(result.error));
@@ -1345,7 +1384,7 @@ document.querySelector("#resend-button").addEventListener("click", async () => {
 document.querySelector("#logout-button").addEventListener("click", async () => {
   if (!supabaseClient) return;
   await supabaseClient.auth.signOut();
-  currentUser = null; currentProfile = null; isAdmin = false; remoteBeerStock = null; remoteBalance = null;
+  currentUser = null; currentProfile = null; isAdmin = false; remoteBeerStock = null; remoteBalance = null; negativeLimit = 0;
   document.querySelector("#auth-screen").hidden = false;
 });
 

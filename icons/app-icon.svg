@@ -1,15 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Cafe Daniel Logo">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#ffca54"/>
-      <stop offset="1" stop-color="#e99000"/>
+    <linearGradient id="g" x1="96" x2="416" y1="64" y2="448" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e8f4ff"/>
+    </linearGradient>
+    <linearGradient id="b" x1="140" x2="372" y1="118" y2="394" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0a72c9"/>
+      <stop offset="1" stop-color="#004a91"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="#17120d"/>
-  <circle cx="256" cy="256" r="180" fill="url(#bg)"/>
-  <path d="M155 188h187v169c0 23-19 42-42 42H197c-23 0-42-19-42-42V188Z" fill="#fff7e8"/>
-  <path d="M183 229h131v126c0 10-8 18-18 18h-95c-10 0-18-8-18-18V229Z" fill="#f4a000"/>
-  <path d="M342 232h26c34 0 61 27 61 61s-27 61-61 61h-26v-34h23c16 0 29-12 29-27s-13-27-29-27h-23v-34Z" fill="#fff7e8"/>
-  <path d="M164 191c11-41 54-53 83-29 20-31 73-24 83 13 27-3 43 20 35 42H158c-13-8-10-22 6-26Z" fill="#fff"/>
+  <rect width="512" height="512" rx="112" fill="#f7fbff"/>
+  <circle cx="256" cy="256" r="202" fill="url(#g)" stroke="#0a64ad" stroke-width="18"/>
+  <circle cx="256" cy="256" r="168" fill="url(#b)"/>
+  <path d="M156 178c45-44 155-44 200 0" fill="none" stroke="#ffffff" stroke-width="20" stroke-linecap="round"/>
+  <path d="M168 352c52 34 124 34 176 0" fill="none" stroke="#ffffff" stroke-width="18" stroke-linecap="round"/>
+  <g fill="#ffffff">
+    <path d="M184 236h112v104a28 28 0 0 1-28 28h-56a28 28 0 0 1-28-28V236Zm112 32h22a42 42 0 0 1 0 84h-22v-24h22a18 18 0 0 0 0-36h-22v-24Z"/>
+    <rect x="174" y="206" width="132" height="34" rx="17"/>
+    <circle cx="214" cy="188" r="18"/>
+    <circle cx="252" cy="178" r="24"/>
+    <circle cx="288" cy="192" r="17"/>
+  </g>
+  <text x="256" y="116" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="900" fill="#0b2741" letter-spacing="2">CAFE</text>
+  <text x="256" y="428" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="900" fill="#0b2741" letter-spacing="1">DANIEL</text>
 </svg>
-

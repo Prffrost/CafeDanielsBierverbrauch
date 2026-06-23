@@ -4,6 +4,7 @@
 create table if not exists public.organizations (
   id uuid primary key default gen_random_uuid(),
   name text not null,
+  max_negative_balance numeric(10,2) not null default 0 check(max_negative_balance>=0),
   created_by uuid not null references auth.users(id),
   created_at timestamptz not null default now()
 );
@@ -114,6 +115,17 @@ create or replace function public.is_org_admin(p_org uuid)
 returns boolean language sql stable security definer set search_path=public
 as $$ select exists(select 1 from memberships where organization_id=p_org and user_id=auth.uid() and role='admin') $$;
 
+alter table public.organizations add column if not exists max_negative_balance numeric(10,2) not null default 0 check(max_negative_balance>=0);
+
+create or replace function public.set_org_negative_limit(p_org uuid,p_limit numeric)
+returns public.organizations language plpgsql security definer set search_path=public
+as $$ declare v_row organizations; begin
+  if not is_org_admin(p_org) then raise exception 'Nur für Administratoren'; end if;
+  if p_limit<0 then raise exception 'Minuslimit ungültig'; end if;
+  update organizations set max_negative_balance=round(p_limit,2) where id=p_org returning * into v_row;
+  return v_row;
+end $$;
+
 create or replace function public.create_workspace(p_name text)
 returns uuid language plpgsql security definer set search_path=public set row_security=off
 as $$ declare v_org uuid; v_group uuid; begin
@@ -161,13 +173,14 @@ else 0 end $$;
 
 create or replace function public.record_org_consumption(p_client text,p_org uuid,p_beverage uuid,p_quantity integer,p_at timestamptz)
 returns public.org_consumptions language plpgsql security definer set search_path=public
-as $$ declare v_bev org_beverages; v_balance numeric; v_row org_consumptions; begin
-  if not is_org_admin(p_org) then raise exception 'Nur fÃ¼r Administratoren'; end if;
+as $$ declare v_bev org_beverages; v_balance numeric; v_limit numeric := 0; v_row org_consumptions; begin
+  if not is_org_member(p_org) then raise exception 'Kein Mitglied'; end if;
   select * into v_bev from org_beverages where id=p_beverage and organization_id=p_org and active for update;
   if not found or p_quantity<1 then raise exception 'Ungültige Buchung'; end if;
   select coalesce((select sum(amount) from org_deposits where organization_id=p_org and user_id=auth.uid()),0)-
          coalesce((select sum(quantity*unit_price) from org_consumptions where organization_id=p_org and user_id=auth.uid()),0) into v_balance;
-  if v_balance<p_quantity*v_bev.price then raise exception 'Guthaben reicht nicht aus'; end if;
+  select coalesce(max_negative_balance,0) into v_limit from organizations where id=p_org;
+  if v_balance-(p_quantity*v_bev.price)<-v_limit then raise exception 'Guthaben reicht nicht aus'; end if;
   if get_org_stock(p_org,p_beverage)<p_quantity then raise exception 'Lagerbestand reicht nicht aus'; end if;
   insert into org_consumptions(client_id,organization_id,user_id,beverage_id,quantity,unit_price,consumed_at)
   values(p_client,p_org,auth.uid(),p_beverage,p_quantity,v_bev.price,p_at)
@@ -383,7 +396,7 @@ alter table public.org_deposits add column if not exists gift_from_user uuid ref
 
 create or replace function public.give_beer_to_user(p_client text,p_org uuid,p_to_user uuid,p_beverage uuid,p_quantity integer,p_at timestamptz)
 returns public.org_consumptions language plpgsql security definer set search_path=public
-as $$ declare v_bev org_beverages; v_sender_group uuid; v_receiver_group uuid; v_balance numeric; v_row org_consumptions; begin
+as $$ declare v_bev org_beverages; v_sender_group uuid; v_receiver_group uuid; v_balance numeric; v_limit numeric := 0; v_row org_consumptions; begin
   if not is_org_member(p_org) then raise exception 'Kein Mitglied'; end if;
   if p_to_user=auth.uid() then raise exception 'Du kannst dir nicht selbst Bier ausgeben'; end if;
   if p_quantity<1 then raise exception 'Ungültige Menge'; end if;
@@ -393,7 +406,8 @@ as $$ declare v_bev org_beverages; v_sender_group uuid; v_receiver_group uuid; v
   if not found then raise exception 'Bier nicht gefunden'; end if;
   select coalesce((select sum(amount) from org_deposits where organization_id=p_org and user_id=auth.uid()),0)-
          coalesce((select sum(quantity*unit_price) from org_consumptions where organization_id=p_org and user_id=auth.uid()),0) into v_balance;
-  if v_balance<p_quantity*v_bev.price then raise exception 'Guthaben reicht nicht aus'; end if;
+  select coalesce(max_negative_balance,0) into v_limit from organizations where id=p_org;
+  if v_balance-(p_quantity*v_bev.price)<-v_limit then raise exception 'Guthaben reicht nicht aus'; end if;
   if get_org_stock(p_org,p_beverage)<p_quantity then raise exception 'Lagerbestand reicht nicht aus'; end if;
   insert into org_consumptions(client_id,organization_id,user_id,beverage_id,quantity,unit_price,consumed_at,gift_to_user)
   values(p_client,p_org,auth.uid(),p_beverage,p_quantity,v_bev.price,p_at,p_to_user) returning * into v_row;
@@ -471,3 +485,4 @@ create policy "chat_group_read" on org_chat_messages for select to authenticated
 create policy "member_groups_read" on org_member_groups for select to authenticated using(is_org_member(organization_id));
 
 grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),get_member_balances(uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz),add_org_deposit(text,uuid,numeric),admin_add_user_deposit(text,uuid,uuid,numeric),add_member_by_email(uuid,text,uuid),add_org_stock(uuid,uuid,integer,text),add_org_stock(uuid,uuid,integer,text,numeric),upsert_org_beverage(uuid,text,numeric,numeric),update_org_beverage_price(uuid,uuid,numeric),update_org_beverage_purchase_price(uuid,uuid,numeric),deactivate_org_beverage(uuid,uuid),create_org_group(uuid,text),update_member_group(uuid,uuid,uuid),delete_member(uuid,uuid),delete_org_group(uuid,uuid),delete_workspace(uuid),reset_workspace_values(uuid),send_group_chat_message(uuid,uuid,text),send_chat_message(uuid,uuid,uuid,text,text,text,text),give_beer_to_user(text,uuid,uuid,uuid,integer,timestamptz),set_member_groups(uuid,uuid,uuid[]),set_member_admin_role(uuid,uuid,boolean),delete_org_consumption(uuid,uuid) to authenticated;
+grant execute on function set_org_negative_limit(uuid,numeric) to authenticated;

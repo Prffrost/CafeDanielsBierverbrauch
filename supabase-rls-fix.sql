@@ -212,6 +212,89 @@ $$;
 grant execute on function public.add_org_deposit(text, uuid, numeric) to authenticated;
 grant execute on function public.add_org_stock(uuid, uuid, integer, text) to authenticated;
 
+alter table public.organizations
+  add column if not exists max_negative_balance numeric(10,2) not null default 0 check(max_negative_balance >= 0);
+
+create or replace function public.set_org_negative_limit(p_org uuid, p_limit numeric)
+returns public.organizations
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_row public.organizations;
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+  if p_limit < 0 then
+    raise exception 'Minuslimit ungültig';
+  end if;
+
+  update public.organizations
+  set max_negative_balance=round(p_limit, 2)
+  where id=p_org
+  returning * into v_row;
+
+  return v_row;
+end
+$$;
+
+grant execute on function public.set_org_negative_limit(uuid, numeric) to authenticated;
+
+create or replace function public.record_org_consumption(p_client text, p_org uuid, p_beverage uuid, p_quantity integer, p_at timestamptz)
+returns public.org_consumptions
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_bev public.org_beverages;
+  v_balance numeric;
+  v_limit numeric := 0;
+  v_row public.org_consumptions;
+begin
+  if not public.is_org_member(p_org) then
+    raise exception 'Kein Mitglied';
+  end if;
+
+  select * into v_bev
+  from public.org_beverages
+  where id=p_beverage and organization_id=p_org and active
+  for update;
+
+  if not found or p_quantity < 1 then
+    raise exception 'Ungültige Buchung';
+  end if;
+
+  select coalesce((select sum(amount) from public.org_deposits where organization_id=p_org and user_id=auth.uid()),0)-
+         coalesce((select sum(quantity*unit_price) from public.org_consumptions where organization_id=p_org and user_id=auth.uid()),0)
+  into v_balance;
+
+  select coalesce(max_negative_balance,0)
+  into v_limit
+  from public.organizations
+  where id=p_org;
+
+  if v_balance - (p_quantity * v_bev.price) < -v_limit then
+    raise exception 'Guthaben reicht nicht aus';
+  end if;
+
+  if public.get_org_stock(p_org,p_beverage) < p_quantity then
+    raise exception 'Lagerbestand reicht nicht aus';
+  end if;
+
+  insert into public.org_consumptions(client_id,organization_id,user_id,beverage_id,quantity,unit_price,consumed_at)
+  values(p_client,p_org,auth.uid(),p_beverage,p_quantity,v_bev.price,p_at)
+  on conflict(client_id) do update set client_id=excluded.client_id
+  returning * into v_row;
+
+  return v_row;
+end
+$$;
+
+grant execute on function public.record_org_consumption(text, uuid, uuid, integer, timestamptz) to authenticated;
+
 alter table public.org_stock_movements
   add column if not exists purchase_price numeric(10,2) not null default 0 check(purchase_price >= 0);
 
@@ -595,6 +678,7 @@ declare
   v_sender_group uuid;
   v_receiver_group uuid;
   v_balance numeric;
+  v_limit numeric := 0;
   v_row public.org_consumptions;
 begin
   if not public.is_org_member(p_org) then
@@ -630,7 +714,12 @@ begin
          coalesce((select sum(quantity*unit_price) from public.org_consumptions where organization_id=p_org and user_id=auth.uid()),0)
   into v_balance;
 
-  if v_balance < p_quantity * v_bev.price then
+  select coalesce(max_negative_balance,0)
+  into v_limit
+  from public.organizations
+  where id=p_org;
+
+  if v_balance - (p_quantity * v_bev.price) < -v_limit then
     raise exception 'Guthaben reicht nicht aus';
   end if;
 
