@@ -38,6 +38,8 @@ let activeStatsUser = "me";
 let scannerStream = null;
 let scannerFrame = 0;
 let chatMessages = [];
+const WORKSPACE_LIMIT = 10;
+const CHAT_LIMIT = 10;
 
 dateInput.value = localDateString(new Date());
 
@@ -111,6 +113,15 @@ function activeMembership() {
 
 function activeGroupId() {
   return activeMembership()?.group_id || organizationMembers.find((member) => member.user_id === currentUser?.id)?.group_id || null;
+}
+
+function visibleOrganizations() {
+  const limited = organizations.slice(0, WORKSPACE_LIMIT);
+  if (activeOrganizationId && !limited.some((item) => item.organization_id === activeOrganizationId)) {
+    const active = organizations.find((item) => item.organization_id === activeOrganizationId);
+    if (active) return [active, ...limited.slice(0, WORKSPACE_LIMIT - 1)];
+  }
+  return limited;
 }
 
 function totalSpent() { return entries.reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0); }
@@ -196,6 +207,7 @@ function renderProfile() {
     image.hidden = !photo;
     fallback.hidden = Boolean(photo);
     if (photo) image.src = photo;
+    else if (fallbackId === "profile-fallback-icon") fallback.textContent = (settings.profileName || currentUser?.email || "?").trim().slice(0, 1).toUpperCase();
   }
 }
 
@@ -258,8 +270,8 @@ async function loadRemoteState() {
   chatMessages = [];
   const groupId = activeGroupId();
   if (groupId) {
-    const chatResult = await supabaseClient.from("org_chat_messages").select("id,user_id,group_id,message,created_at").eq("organization_id", activeOrganizationId).eq("group_id", groupId).order("created_at", { ascending: true }).limit(100);
-    if (!chatResult.error) chatMessages = chatResult.data;
+    const chatResult = await supabaseClient.from("org_chat_messages").select("id,user_id,group_id,message,created_at").eq("organization_id", activeOrganizationId).eq("group_id", groupId).order("created_at", { ascending: false }).limit(CHAT_LIMIT);
+    if (!chatResult.error) chatMessages = chatResult.data.reverse();
   }
   remoteBeverageIds = new Map(beverageResult.data.map((item) => [item.name, item.id]));
   settings.beverages = beverageResult.data.map((item) => item.name);
@@ -376,7 +388,7 @@ function renderStatus() {
   document.querySelector("#logout-button").hidden = !currentUser;
   document.querySelectorAll("[data-admin-only]").forEach((element) => { element.hidden = REMOTE_ENABLED && !isAdmin; });
   const workspaceSelect = document.querySelector("#workspace-select");
-  workspaceSelect.innerHTML = organizations.map((item) => `<option value="${item.organization_id}">${escapeHTML(item.organizations.name)}</option>`).join("");
+  workspaceSelect.innerHTML = visibleOrganizations().map((item) => `<option value="${item.organization_id}">${escapeHTML(item.organizations.name)}</option>`).join("");
   workspaceSelect.value = activeOrganizationId;
   workspaceSelect.disabled = !organizations.length;
   document.querySelector("#delete-workspace-button").hidden = !isAdmin || !activeOrganizationId;
@@ -404,6 +416,12 @@ function renderTeam() {
       return `<article class="team-member-card"><div class="member-avatar">${escapeHTML(initials)}</div><div><strong>${escapeHTML(name)}</strong><span>${member.user_id === currentUser?.id ? "Du" : "Mitglied"}</span></div><span class="role-pill">${member.role === "admin" ? "Admin" : "User"}</span></article>`;
     }).join("")
     : '<p class="days-empty">Noch keine Mitglieder in dieser Gruppe.</p>';
+  const giveSelect = document.querySelector("#give-beer-user");
+  const possibleReceivers = members.filter((member) => member.user_id !== currentUser?.id);
+  giveSelect.innerHTML = possibleReceivers.length
+    ? possibleReceivers.map((member) => `<option value="${member.user_id}">${escapeHTML(member.profile?.display_name || member.user_id)}</option>`).join("")
+    : '<option value="">Kein anderer Benutzer</option>';
+  giveSelect.disabled = !possibleReceivers.length;
 
   document.querySelector("#chat-list").innerHTML = chatMessages.length
     ? chatMessages.map((message) => {
@@ -809,6 +827,35 @@ document.querySelector("#chat-form").addEventListener("submit", async (event) =>
   input.value = "";
   await loadRemoteState();
   setActiveTab("team");
+});
+
+document.querySelector("#give-beer-decrease").addEventListener("click", () => {
+  const input = document.querySelector("#give-beer-quantity");
+  input.value = Math.max(1, (Number.parseInt(input.value, 10) || 1) - 1);
+});
+
+document.querySelector("#give-beer-increase").addEventListener("click", () => {
+  const input = document.querySelector("#give-beer-quantity");
+  input.value = Math.min(99, (Number.parseInt(input.value, 10) || 1) + 1);
+});
+
+document.querySelector("#give-beer-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!currentUser) return showToast("Bitte zuerst anmelden");
+  if (!navigator.onLine) return showToast("Bier ausgeben benötigt Verbindung");
+  const receiver = document.querySelector("#give-beer-user").value;
+  const quantity = Number.parseInt(document.querySelector("#give-beer-quantity").value, 10);
+  const beerId = remoteBeverageIds.get("Bier");
+  const beerPrice = settings.prices.Bier || 0;
+  if (!receiver) return showToast("Bitte Benutzer auswählen");
+  if (!beerId || !Number.isInteger(quantity) || quantity < 1) return showToast("Bier nicht verfügbar");
+  if (quantity * beerPrice > accountBalance() + 0.001) return showToast("Guthaben reicht nicht aus");
+  if (quantity > beerStock()) return showToast("Nicht genügend Bier im Lager");
+  const result = await supabaseClient.rpc("give_beer_to_user", { p_client: crypto.randomUUID(), p_org: activeOrganizationId, p_to_user: receiver, p_beverage: beerId, p_quantity: quantity, p_at: `${dateInput.value}T12:00:00.000Z` });
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  document.querySelector("#give-beer-quantity").value = 1;
+  await loadRemoteState();
+  showToast(`${quantity} Bier ausgegeben`);
 });
 
 document.querySelector("#copy-invite").addEventListener("click", async () => {

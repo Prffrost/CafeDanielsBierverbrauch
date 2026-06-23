@@ -285,6 +285,28 @@ as $$ declare v_row org_chat_messages; begin
   return v_row;
 end $$;
 
+create or replace function public.give_beer_to_user(p_client text,p_org uuid,p_to_user uuid,p_beverage uuid,p_quantity integer,p_at timestamptz)
+returns public.org_consumptions language plpgsql security definer set search_path=public
+as $$ declare v_bev org_beverages; v_sender_group uuid; v_receiver_group uuid; v_balance numeric; v_row org_consumptions; begin
+  if not is_org_member(p_org) then raise exception 'Kein Mitglied'; end if;
+  if p_to_user=auth.uid() then raise exception 'Du kannst dir nicht selbst Bier ausgeben'; end if;
+  if p_quantity<1 then raise exception 'Ungültige Menge'; end if;
+  select group_id into v_sender_group from memberships where organization_id=p_org and user_id=auth.uid();
+  select group_id into v_receiver_group from memberships where organization_id=p_org and user_id=p_to_user;
+  if v_receiver_group is null or v_sender_group is distinct from v_receiver_group then raise exception 'Benutzer ist nicht in deiner Gruppe'; end if;
+  select * into v_bev from org_beverages where id=p_beverage and organization_id=p_org and name='Bier' and active for update;
+  if not found then raise exception 'Bier nicht gefunden'; end if;
+  select coalesce((select sum(amount) from org_deposits where organization_id=p_org and user_id=auth.uid()),0)-
+         coalesce((select sum(quantity*unit_price) from org_consumptions where organization_id=p_org and user_id=auth.uid()),0) into v_balance;
+  if v_balance<p_quantity*v_bev.price then raise exception 'Guthaben reicht nicht aus'; end if;
+  if get_org_stock(p_org,p_beverage)<p_quantity then raise exception 'Lagerbestand reicht nicht aus'; end if;
+  insert into org_consumptions(client_id,organization_id,user_id,beverage_id,quantity,unit_price,consumed_at)
+  values(p_client,p_org,auth.uid(),p_beverage,p_quantity,v_bev.price,p_at) returning * into v_row;
+  insert into org_deposits(client_id,organization_id,user_id,amount)
+  values(p_client || '-gift',p_org,p_to_user,p_quantity*v_bev.price);
+  return v_row;
+end $$;
+
 alter table organizations enable row level security; alter table app_groups enable row level security;
 alter table memberships enable row level security; alter table invitations enable row level security;
 alter table org_beverages enable row level security; alter table org_stock_movements enable row level security;
@@ -316,4 +338,4 @@ create policy "org_deposit_read" on org_deposits for select to authenticated usi
 create policy "org_deposit_insert" on org_deposits for insert to authenticated with check(user_id=auth.uid() and is_org_member(organization_id));
 create policy "chat_group_read" on org_chat_messages for select to authenticated using(is_org_admin(organization_id) or exists(select 1 from memberships where organization_id=org_chat_messages.organization_id and user_id=auth.uid() and group_id=org_chat_messages.group_id));
 
-grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz),add_org_deposit(text,uuid,numeric),add_org_stock(uuid,uuid,integer,text),upsert_org_beverage(uuid,text,numeric,numeric),update_org_beverage_price(uuid,uuid,numeric),update_org_beverage_purchase_price(uuid,uuid,numeric),deactivate_org_beverage(uuid,uuid),create_org_group(uuid,text),update_member_group(uuid,uuid,uuid),delete_member(uuid,uuid),delete_org_group(uuid,uuid),delete_workspace(uuid),send_group_chat_message(uuid,uuid,text) to authenticated;
+grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz),add_org_deposit(text,uuid,numeric),add_org_stock(uuid,uuid,integer,text),upsert_org_beverage(uuid,text,numeric,numeric),update_org_beverage_price(uuid,uuid,numeric),update_org_beverage_purchase_price(uuid,uuid,numeric),deactivate_org_beverage(uuid,uuid),create_org_group(uuid,text),update_member_group(uuid,uuid,uuid),delete_member(uuid,uuid),delete_org_group(uuid,uuid),delete_workspace(uuid),send_group_chat_message(uuid,uuid,text),give_beer_to_user(text,uuid,uuid,uuid,integer,timestamptz) to authenticated;

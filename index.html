@@ -44,8 +44,9 @@
 
   <div class="app-shell">
     <header class="hero">
-      <div class="brand-mark"><svg id="profile-fallback-icon" class="icon icon-xl"><use href="#icon-beer"/></svg><img id="profile-photo-display" alt="Profilbild" hidden></div>
+      <div class="brand-mark app-logo"><svg class="icon icon-xl"><use href="#icon-beer"/></svg></div>
       <div><p class="eyebrow">CAFE DANIELS</p><h1>Getränkeverbrauch</h1><p class="subtitle">Profil: <span id="profile-name-display">nicht eingerichtet</span></p></div>
+      <div class="header-avatar"><img id="profile-photo-display" alt="Profilbild" hidden><span id="profile-fallback-icon">?</span></div>
     </header>
 
     <main>
@@ -103,6 +104,11 @@
           <div class="section-heading"><div><p class="section-label">GRUPPE</p><h2 id="team-heading">Mitglieder</h2></div><svg class="icon title-icon"><use href="#icon-users"/></svg></div>
           <p class="form-note" id="team-group-name">Aktive Gruppe</p>
           <div id="team-members-list" class="team-members"></div>
+          <div class="give-beer-card">
+            <h3>Bier ausgeben</h3>
+            <form id="give-beer-form" class="give-beer-form"><select id="give-beer-user" required></select><div class="stepper compact-stepper"><button type="button" id="give-beer-decrease" aria-label="Bieranzahl verringern">−</button><input id="give-beer-quantity" type="number" inputmode="numeric" min="1" max="99" value="1" required><button type="button" id="give-beer-increase" aria-label="Bieranzahl erhöhen">+</button></div><button class="small-primary" type="submit">Ausgeben</button></form>
+            <p class="form-note">Der Wert wird dem ausgewählten Benutzer gutgeschrieben und bei dir abgezogen.</p>
+          </div>
         </section>
         <section class="team-card chat-section">
           <div class="section-heading"><div><p class="section-label">CHAT</p><h2>Gruppenchat</h2></div><svg class="icon title-icon"><use href="#icon-chat"/></svg></div>
