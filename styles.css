@@ -172,6 +172,7 @@ form { margin-top:22px; }
 .member-group-checks { display:grid; gap:6px; }
 .member-group-checks label { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:11px; }
 .member-group-checks .admin-check { color:var(--blue); font-weight:850; }
+.readonly-groups span { display:inline-flex; width:max-content; max-width:100%; padding:5px 8px; border-radius:999px; color:var(--blue); background:rgba(11,94,168,.1); font-size:11px; font-weight:850; }
 .member-group-checks input { width:16px; height:16px; accent-color:var(--blue); }
 .stock-add-form { display:grid; grid-template-columns:minmax(0,1fr) 78px minmax(88px,.8fr); gap:9px; margin-top:14px; }
 .stock-add-form button { grid-column:1 / -1; }

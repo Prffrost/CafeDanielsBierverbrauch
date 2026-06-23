@@ -543,7 +543,6 @@ function renderStatus() {
 function renderSettingsSections() {
   const allowed = new Set(["locations", "members", "beverages", "qr", "general"]);
   if (!allowed.has(activeSettingsSection)) activeSettingsSection = "locations";
-  if (REMOTE_ENABLED && !isAdmin && activeSettingsSection === "members") activeSettingsSection = "locations";
   document.querySelectorAll("[data-settings-tab]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.settingsTab === activeSettingsSection);
   });
@@ -557,11 +556,17 @@ function renderOrganizationAdmin() {
   document.querySelector("#groups-list").innerHTML = organizationGroups.map((group) => `<div class="settings-row"><span>${escapeHTML(group.name)}</span><button type="button" data-delete-group="${group.id}" aria-label="Gruppe löschen"><svg class="icon"><use href="#icon-trash"/></svg></button></div>`).join("");
   document.querySelector("#invite-group").innerHTML = organizationGroups.map((group) => `<option value="${group.id}">${escapeHTML(group.name)}</option>`).join("");
   document.querySelector("#member-create-group").innerHTML = organizationGroups.map((group) => `<option value="${group.id}">${escapeHTML(group.name)}</option>`).join("");
-  document.querySelector("#members-list").innerHTML = organizationMembers.map((member) => {
+  const groupId = activeGroupId();
+  const visibleMembers = isAdmin ? organizationMembers : organizationMembers.filter((member) => memberGroupIds(member.user_id).includes(groupId));
+  document.querySelector("#members-section-title").textContent = isAdmin ? "Mitglieder zuordnen" : "Mitglieder deiner Gruppe";
+  document.querySelector("#members-help-text").textContent = isAdmin ? "Haken bei Gruppen ordnen Mitglieder zu. Der Admin-Haken gibt Verwaltungsrechte." : "Du siehst hier nur Mitglieder, die mit dir in der aktiven Gruppe sind.";
+  document.querySelector("#members-list").innerHTML = visibleMembers.map((member) => {
     const isSelf = member.user_id === currentUser?.id;
     const groups = memberGroupIds(member.user_id);
-    return `<div class="member-row multi-member-row"><span><strong>${escapeHTML(member.profile?.display_name || member.user_id)}</strong><small>${currency(memberBalances.get(member.user_id) || 0)}</small></span><div class="member-group-checks"><label class="admin-check"><input type="checkbox" data-member-admin="${member.user_id}" ${member.role === "admin" ? "checked" : ""} ${isSelf ? "disabled" : ""}>Admin</label>${organizationGroups.map((group) => `<label><input type="checkbox" data-member-group-user="${member.user_id}" value="${group.id}" ${groups.includes(group.id) ? "checked" : ""}>${escapeHTML(group.name)}</label>`).join("")}</div><button type="button" data-delete-member="${member.user_id}" ${isSelf ? "disabled" : ""} aria-label="Mitglied entfernen"><svg class="icon"><use href="#icon-trash"/></svg></button></div>`;
-  }).join("");
+    const adminControls = `<div class="member-group-checks"><label class="admin-check"><input type="checkbox" data-member-admin="${member.user_id}" ${member.role === "admin" ? "checked" : ""} ${isSelf ? "disabled" : ""}>Admin</label>${organizationGroups.map((group) => `<label><input type="checkbox" data-member-group-user="${member.user_id}" value="${group.id}" ${groups.includes(group.id) ? "checked" : ""}>${escapeHTML(group.name)}</label>`).join("")}</div><button type="button" data-delete-member="${member.user_id}" ${isSelf ? "disabled" : ""} aria-label="Mitglied entfernen"><svg class="icon"><use href="#icon-trash"/></svg></button>`;
+    const readOnlyInfo = `<div class="member-group-checks readonly-groups">${groups.map((groupId) => organizationGroups.find((group) => group.id === groupId)?.name).filter(Boolean).map((name) => `<span>${escapeHTML(name)}</span>`).join("") || "<span>Keine Gruppe</span>"}</div>`;
+    return `<div class="member-row multi-member-row"><span><strong>${escapeHTML(member.profile?.display_name || member.user_id)}</strong><small>${member.role === "admin" ? "Admin" : "Mitglied"}</small></span>${isAdmin ? adminControls : readOnlyInfo}</div>`;
+  }).join("") || '<p class="days-empty">Keine Mitglieder in deiner Gruppe.</p>';
 }
 
 function renderTeam() {
