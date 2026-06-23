@@ -173,8 +173,23 @@ form { margin-top:22px; }
 .member-group-checks label { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:11px; }
 .member-group-checks .admin-check { color:var(--blue); font-weight:850; }
 .member-group-checks input { width:16px; height:16px; accent-color:var(--blue); }
-#stock-form { grid-template-columns:minmax(0,1fr) 90px auto; }
+.stock-add-form { display:grid; grid-template-columns:minmax(0,1fr) 78px minmax(88px,.8fr); gap:9px; margin-top:14px; }
+.stock-add-form button { grid-column:1 / -1; }
 #stock-form select { min-height:55px; padding:0 12px; border:1px solid var(--line); border-radius:16px; color:var(--text); background:var(--field); }
+.workspace-row,.stock-finance-row { display:grid; gap:10px; padding:12px 0; border-bottom:1px solid var(--line); }
+.workspace-row { grid-template-columns:minmax(0,1fr) auto; align-items:center; }
+.workspace-row strong,.workspace-row span { display:block; }
+.workspace-row span { margin-top:3px; color:var(--muted); font-size:11px; }
+.workspace-actions { display:flex; gap:6px; }
+.workspace-actions button { min-height:34px; padding:0 10px; border:0; border-radius:11px; color:#fff; background:var(--blue); font-size:11px; font-weight:850; }
+.workspace-actions button:disabled { opacity:.45; }
+.workspace-actions .danger-mini { background:var(--danger); }
+.stock-finance-row { grid-template-columns:1fr 1fr; }
+.stock-finance-row > div { min-width:0; }
+.stock-finance-row strong,.stock-finance-row span { display:block; }
+.stock-finance-row span { color:var(--muted); font-size:11px; }
+.stock-finance-row .money-negative { color:var(--danger); }
+.stock-finance-row .money-positive { color:#168a4a; }
 .danger-outline { display:flex; width:100%; min-height:45px; align-items:center; justify-content:center; margin-top:12px; border:1px solid color-mix(in srgb,var(--danger) 55%,transparent); border-radius:14px; color:var(--danger); background:transparent; font-weight:800; }
 .segmented-control { display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-top:16px; padding:4px; border:1px solid var(--line); border-radius:15px; background:var(--field); }
 .segmented-control button { min-height:43px; border:0; border-radius:11px; color:var(--muted); background:transparent; font-weight:800; }

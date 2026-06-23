@@ -211,6 +211,52 @@ $$;
 
 grant execute on function public.add_org_deposit(text, uuid, numeric) to authenticated;
 grant execute on function public.add_org_stock(uuid, uuid, integer, text) to authenticated;
+
+alter table public.org_stock_movements
+  add column if not exists purchase_price numeric(10,2) not null default 0 check(purchase_price >= 0);
+
+create or replace function public.add_org_stock(p_org uuid, p_beverage uuid, p_quantity integer, p_note text default null, p_purchase_price numeric default null)
+returns public.org_stock_movements
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_row public.org_stock_movements;
+  v_price numeric;
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+  if p_quantity < 1 then
+    raise exception 'Ungültige Menge';
+  end if;
+
+  select coalesce(p_purchase_price, purchase_price, 0)
+  into v_price
+  from public.org_beverages
+  where id=p_beverage and organization_id=p_org and active;
+
+  if v_price is null then
+    raise exception 'Getränk nicht gefunden';
+  end if;
+  if v_price < 0 then
+    raise exception 'Einkaufspreis ungültig';
+  end if;
+
+  insert into public.org_stock_movements(organization_id, beverage_id, quantity, note, created_by, purchase_price)
+  values(p_org, p_beverage, p_quantity, p_note, auth.uid(), round(v_price, 2))
+  returning * into v_row;
+
+  update public.org_beverages
+  set purchase_price=round(v_price, 2)
+  where id=p_beverage and organization_id=p_org;
+
+  return v_row;
+end
+$$;
+
+grant execute on function public.add_org_stock(uuid, uuid, integer, text, numeric) to authenticated;
 grant execute on function public.update_org_beverage_price(uuid, uuid, numeric) to authenticated;
 grant execute on function public.deactivate_org_beverage(uuid, uuid) to authenticated;
 

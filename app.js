@@ -50,6 +50,8 @@ let receivedGifts = [];
 let chatMode = localStorage.getItem("cafe-daniels-chat-mode") || "group";
 let chatRecipientId = localStorage.getItem("cafe-daniels-chat-recipient") || "";
 let chatLiveTimer = 0;
+let stockExpenses = [];
+let stockFinanceByBeverage = new Map();
 
 dateInput.value = localDateString(new Date());
 
@@ -250,15 +252,23 @@ function financeRangeEntries(period) {
   });
 }
 
+function inFinancePeriod(dateValue, period) {
+  if (period === "day") return dateValue === localDateString(new Date());
+  const range = periodRange(period);
+  const date = new Date(`${dateValue}T12:00:00`);
+  return date >= range.start && date < range.end;
+}
+
 function financeSummary(period) {
-  return financeRangeEntries(period).reduce((summary, entry) => {
+  const summary = financeRangeEntries(period).reduce((summary, entry) => {
     const income = entry.quantity * entry.unitPrice;
-    const expense = entry.quantity * (settings.purchasePrices?.[entry.beverage] || 0);
     summary.quantity += entry.quantity;
     summary.income += income;
-    summary.expense += expense;
     return summary;
   }, { quantity: 0, income: 0, expense: 0 });
+  const expenseSource = stockExpenses.length ? stockExpenses : financeRangeEntries(period).map((entry) => ({ date: entry.date, expense: entry.quantity * (settings.purchasePrices?.[entry.beverage] || 0) }));
+  summary.expense = expenseSource.filter((item) => inFinancePeriod(item.date, period)).reduce((sum, item) => sum + item.expense, 0);
+  return summary;
 }
 
 function renderBeverageChoices() {
@@ -333,7 +343,11 @@ async function loadRemoteState() {
   if (depositResult.error?.message?.includes("gift_from_user")) {
     depositResult = await supabaseClient.from("org_deposits").select("amount").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id);
   }
-  const firstError = [profileResult, beverageResult, consumptionResult, depositResult, groupResult, memberResult].find((result) => result.error)?.error;
+  let stockMovementResult = await supabaseClient.from("org_stock_movements").select("quantity,purchase_price,created_at,org_beverages(name,purchase_price)").eq("organization_id", activeOrganizationId);
+  if (stockMovementResult.error?.message?.includes("purchase_price")) {
+    stockMovementResult = await supabaseClient.from("org_stock_movements").select("quantity,created_at,org_beverages(name,purchase_price)").eq("organization_id", activeOrganizationId);
+  }
+  const firstError = [profileResult, beverageResult, consumptionResult, depositResult, groupResult, memberResult, stockMovementResult].find((result) => result.error)?.error;
   if (firstError) throw firstError;
 
   currentProfile = profileResult.data;
@@ -369,6 +383,13 @@ async function loadRemoteState() {
   settings.beverages = beverageResult.data.map((item) => item.name);
   settings.prices = Object.fromEntries(beverageResult.data.map((item) => [item.name, Number(item.price)]));
   settings.purchasePrices = Object.fromEntries(beverageResult.data.map((item) => [item.name, Number(item.purchase_price) || 0]));
+  stockExpenses = stockMovementResult.data
+    .filter((item) => Number(item.quantity) > 0)
+    .map((item) => {
+      const beverage = item.org_beverages?.name || "";
+      const unit = Number(item.purchase_price) || Number(item.org_beverages?.purchase_price) || settings.purchasePrices[beverage] || 0;
+      return { date: item.created_at.slice(0, 10), beverage, quantity: Number(item.quantity) || 0, unit, expense: (Number(item.quantity) || 0) * unit };
+    });
 
   const pending = entries.filter((entry) => entry.pending);
   let legacy = entries.filter((entry) => entry.legacy);
@@ -391,6 +412,13 @@ async function loadRemoteState() {
     if (!adminConsumption.error) {
       adminEntries = adminConsumption.data.map((item) => ({ id: item.client_id, remoteId: item.id, remote: true, userId: item.user_id, date: item.consumed_at.slice(0, 10), beverage: item.org_beverages.name, quantity: item.quantity, unitPrice: Number(item.unit_price), createdAt: item.consumed_at, giftToUser: item.gift_to_user || "" }));
     }
+  }
+  stockFinanceByBeverage = new Map();
+  for (const name of settings.beverages) {
+    const expenses = stockExpenses.filter((item) => item.beverage === name).reduce((sum, item) => sum + item.expense, 0);
+    const source = isAdmin ? adminEntries : entries;
+    const income = source.filter((entry) => entry.beverage === name).reduce((sum, entry) => sum + entry.quantity * entry.unitPrice, 0);
+    stockFinanceByBeverage.set(name, { expenses, income, balance: income - expenses });
   }
   const beerId = remoteBeverageIds.get("Bier");
   remoteStockByBeverage = new Map();
@@ -502,6 +530,14 @@ function renderStatus() {
   workspaceSelect.innerHTML = visibleOrganizations().map((item) => `<option value="${item.organization_id}">${escapeHTML(item.organizations.name)}</option>`).join("");
   workspaceSelect.value = activeOrganizationId;
   workspaceSelect.disabled = !organizations.length;
+  const workspaceList = document.querySelector("#workspace-list");
+  if (workspaceList) {
+    workspaceList.innerHTML = visibleOrganizations().map((item) => {
+      const active = item.organization_id === activeOrganizationId;
+      const admin = item.role === "admin";
+      return `<div class="workspace-row ${active ? "is-active" : ""}"><div><strong>${escapeHTML(item.organizations.name)}</strong><span>${active ? "Aktiv" : "Standort"} · ${admin ? "Admin" : "Mitglied"}</span></div><div class="workspace-actions"><button type="button" data-switch-workspace="${item.organization_id}" ${active ? "disabled" : ""}>Wechseln</button>${admin ? `<button class="danger-mini" type="button" data-delete-workspace="${item.organization_id}">Löschen</button>` : ""}</div></div>`;
+    }).join("");
+  }
 }
 
 function renderSettingsSections() {
@@ -652,13 +688,16 @@ function renderBeverageSettings() {
   }
   const stockSelect = document.querySelector("#stock-beverage");
   if (stockSelect) stockSelect.innerHTML = settings.beverages.map((name) => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join("");
+  const stockPriceInput = document.querySelector("#stock-purchase-price");
+  if (stockSelect && stockPriceInput && !stockPriceInput.value) stockPriceInput.value = (settings.purchasePrices?.[stockSelect.value] || 0).toFixed(2).replace(".", ",");
   const depositSelect = document.querySelector("#deposit-user");
   if (depositSelect) depositSelect.innerHTML = organizationMembers.map((member) => `<option value="${member.user_id}">${escapeHTML(member.profile?.display_name || member.user_id)}</option>`).join("");
   const stockList = document.querySelector("#stock-list");
   if (stockList) {
     stockList.innerHTML = settings.beverages.map((name) => {
       const stock = remoteStockByBeverage.has(name) ? remoteStockByBeverage.get(name) : (name === "Bier" ? beerStock() : 0);
-      return `<div class="settings-row"><span>${escapeHTML(name)}</span><strong>${stock} Stk.</strong></div>`;
+      const finance = stockFinanceByBeverage.get(name) || { expenses: 0, income: 0, balance: 0 };
+      return `<div class="stock-finance-row"><div><strong>${escapeHTML(name)}</strong><span>${stock} Stk.</span></div><div><span>Einkauf</span><strong class="money-negative">-${currency(finance.expenses)}</strong></div><div><span>Einnahmen</span><strong>${currency(finance.income)}</strong></div><div><span>${finance.balance >= 0 ? "Guthaben" : "Offen"}</span><strong class="${finance.balance >= 0 ? "money-positive" : "money-negative"}">${finance.balance >= 0 ? "+" : ""}${currency(finance.balance)}</strong></div></div>`;
     }).join("");
   }
   const financeList = document.querySelector("#beverage-finance-list");
@@ -845,18 +884,29 @@ document.querySelector("#deposit-form").addEventListener("submit", async (event)
 document.querySelector("#stock-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const amount = Number.parseInt(document.querySelector("#stock-amount").value, 10);
+  const purchasePrice = parsePrice(document.querySelector("#stock-purchase-price").value);
   if (!Number.isInteger(amount) || amount < 1) return showToast("Bitte gültige Anzahl eingeben");
+  if (!Number.isFinite(purchasePrice) || purchasePrice < 0) return showToast("Bitte gültigen Einkaufspreis eingeben");
   if (currentUser) {
     if (!isAdmin) return showToast("Nur für Administratoren");
     if (!navigator.onLine) return showToast("Lagerzugang benötigt eine Verbindung");
     const beverageName = document.querySelector("#stock-beverage").value || "Bier";
     const beverageId = remoteBeverageIds.get(beverageName);
     if (!beverageId) return showToast("Getränk erst speichern/SQL-Fix ausführen");
-    const result = await supabaseClient.rpc("add_org_stock", { p_org: activeOrganizationId, p_beverage: beverageId, p_quantity: amount, p_note: "Lagerzugang" });
+    const result = await supabaseClient.rpc("add_org_stock", { p_org: activeOrganizationId, p_beverage: beverageId, p_quantity: amount, p_note: "Lagerzugang", p_purchase_price: Math.round(purchasePrice * 100) / 100 });
     if (result.error) return showToast(remoteErrorMessage(result.error));
     event.target.reset(); await loadRemoteState(); return showToast("Globaler Bestand erhöht");
   }
-  settings.beerStockAdded += amount; persistSettings(); event.target.reset(); render(); showToast("Bestand erhöht");
+  const beverageName = document.querySelector("#stock-beverage").value || "Bier";
+  if (beverageName === "Bier") settings.beerStockAdded += amount;
+  settings.purchasePrices[beverageName] = Math.round(purchasePrice * 100) / 100;
+  stockExpenses.push({ date: localDateString(new Date()), beverage: beverageName, quantity: amount, unit: purchasePrice, expense: amount * purchasePrice });
+  persistSettings(); event.target.reset(); render(); showToast("Bestand erhöht");
+});
+
+document.querySelector("#stock-beverage").addEventListener("change", (event) => {
+  const input = document.querySelector("#stock-purchase-price");
+  input.value = (settings.purchasePrices?.[event.target.value] || 0).toFixed(2).replace(".", ",");
 });
 
 document.querySelector("#beverage-form").addEventListener("submit", async (event) => {
@@ -947,6 +997,21 @@ document.querySelector("#workspace-select").addEventListener("change", async (ev
   catch (error) { showToast(remoteErrorMessage(error)); }
 });
 
+document.querySelector("#workspace-list")?.addEventListener("click", async (event) => {
+  const switchButton = event.target.closest("[data-switch-workspace]");
+  if (switchButton) {
+    activeOrganizationId = switchButton.dataset.switchWorkspace;
+    localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
+    remoteBeerStock = null; remoteBalance = null;
+    try { await loadRemoteState(); await syncPendingConsumptions(); showToast("Lokal gewechselt"); }
+    catch (error) { showToast(remoteErrorMessage(error)); }
+    return;
+  }
+  const deleteButton = event.target.closest("[data-delete-workspace]");
+  if (!deleteButton) return;
+  await deleteWorkspaceById(deleteButton.dataset.deleteWorkspace);
+});
+
 document.querySelector("#workspace-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!currentUser) return showToast("Bitte zuerst anmelden");
@@ -965,18 +1030,20 @@ document.querySelector("#workspace-form").addEventListener("submit", async (even
   catch (error) { remoteStatusMessage = remoteErrorMessage(error); render(); showToast(remoteStatusMessage); }
 });
 
-document.querySelector("#delete-workspace-button")?.addEventListener("click", async () => {
-  if (!currentUser || !isAdmin || !activeOrganizationId) return showToast("Nur fÃ¼r Administratoren");
-  const active = organizations.find((item) => item.organization_id === activeOrganizationId);
-  const activeName = active?.organizations?.name || "Aktiver Standort";
+async function deleteWorkspaceById(orgId) {
+  const target = organizations.find((item) => item.organization_id === orgId);
+  if (!currentUser || !target || target.role !== "admin") return showToast("Nur für Administratoren");
+  const activeName = target?.organizations?.name || "Standort";
   const ok = confirm(`Lokal / Standort „${activeName}“ wirklich lÃ¶schen?\n\nAlle Mitglieder, Gruppen, GetrÃ¤nke, Lager, Guthaben, Verbrauch und Chat dieses Standorts werden gelÃ¶scht.`);
   if (!ok) return;
   const really = confirm("Bitte nochmal bestÃ¤tigen: Dieser Standort kann nicht automatisch wiederhergestellt werden.");
   if (!really) return;
-  const result = await supabaseClient.rpc("delete_workspace", { p_org: activeOrganizationId });
+  const result = await supabaseClient.rpc("delete_workspace", { p_org: orgId });
   if (result.error) return showToast(remoteErrorMessage(result.error));
-  localStorage.removeItem("cafe-daniels-active-org");
-  activeOrganizationId = "";
+  if (activeOrganizationId === orgId) {
+    localStorage.removeItem("cafe-daniels-active-org");
+    activeOrganizationId = "";
+  }
   try {
     await loadOrganizations(false);
     if (activeOrganizationId) await loadRemoteState();
@@ -1000,7 +1067,7 @@ document.querySelector("#delete-workspace-button")?.addEventListener("click", as
   }
   render();
   showToast("Standort gelÃ¶scht");
-});
+}
 
 document.querySelector("#reset-values-button")?.addEventListener("click", async () => {
   if (!currentUser || !isAdmin || !activeOrganizationId) return showToast("Nur für Administratoren");

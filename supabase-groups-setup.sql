@@ -61,6 +61,7 @@ create table if not exists public.org_stock_movements (
   organization_id uuid not null references public.organizations(id) on delete cascade,
   beverage_id uuid not null references public.org_beverages(id),
   quantity integer not null check(quantity<>0),
+  purchase_price numeric(10,2) not null default 0 check(purchase_price>=0),
   note text,
   created_by uuid not null references auth.users(id),
   created_at timestamptz not null default now()
@@ -213,14 +214,19 @@ as $$ declare v_user uuid; v_row memberships; begin
   return v_row;
 end $$;
 
-create or replace function public.add_org_stock(p_org uuid,p_beverage uuid,p_quantity integer,p_note text default null)
+alter table public.org_stock_movements add column if not exists purchase_price numeric(10,2) not null default 0 check(purchase_price>=0);
+
+create or replace function public.add_org_stock(p_org uuid,p_beverage uuid,p_quantity integer,p_note text default null,p_purchase_price numeric default null)
 returns public.org_stock_movements language plpgsql security definer set search_path=public
-as $$ declare v_row org_stock_movements; begin
+as $$ declare v_row org_stock_movements; v_price numeric; begin
   if not is_org_admin(p_org) then raise exception 'Nur für Administratoren'; end if;
   if p_quantity<1 then raise exception 'Ungültige Menge'; end if;
-  if not exists(select 1 from org_beverages where id=p_beverage and organization_id=p_org and active) then raise exception 'Getränk nicht gefunden'; end if;
-  insert into org_stock_movements(organization_id,beverage_id,quantity,note,created_by)
-  values(p_org,p_beverage,p_quantity,p_note,auth.uid()) returning * into v_row;
+  select coalesce(p_purchase_price,purchase_price,0) into v_price from org_beverages where id=p_beverage and organization_id=p_org and active;
+  if v_price is null then raise exception 'Getränk nicht gefunden'; end if;
+  if v_price<0 then raise exception 'Einkaufspreis ungültig'; end if;
+  insert into org_stock_movements(organization_id,beverage_id,quantity,note,created_by,purchase_price)
+  values(p_org,p_beverage,p_quantity,p_note,auth.uid(),round(v_price,2)) returning * into v_row;
+  update org_beverages set purchase_price=round(v_price,2) where id=p_beverage and organization_id=p_org;
   return v_row;
 end $$;
 
@@ -464,4 +470,4 @@ create policy "org_deposit_insert" on org_deposits for insert to authenticated w
 create policy "chat_group_read" on org_chat_messages for select to authenticated using((is_org_admin(organization_id) or exists(select 1 from org_member_groups where organization_id=org_chat_messages.organization_id and user_id=auth.uid() and group_id=org_chat_messages.group_id)) and (recipient_id is null or recipient_id=auth.uid() or user_id=auth.uid()));
 create policy "member_groups_read" on org_member_groups for select to authenticated using(is_org_member(organization_id));
 
-grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),get_member_balances(uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz),add_org_deposit(text,uuid,numeric),admin_add_user_deposit(text,uuid,uuid,numeric),add_member_by_email(uuid,text,uuid),add_org_stock(uuid,uuid,integer,text),upsert_org_beverage(uuid,text,numeric,numeric),update_org_beverage_price(uuid,uuid,numeric),update_org_beverage_purchase_price(uuid,uuid,numeric),deactivate_org_beverage(uuid,uuid),create_org_group(uuid,text),update_member_group(uuid,uuid,uuid),delete_member(uuid,uuid),delete_org_group(uuid,uuid),delete_workspace(uuid),reset_workspace_values(uuid),send_group_chat_message(uuid,uuid,text),send_chat_message(uuid,uuid,uuid,text,text,text,text),give_beer_to_user(text,uuid,uuid,uuid,integer,timestamptz),set_member_groups(uuid,uuid,uuid[]),set_member_admin_role(uuid,uuid,boolean),delete_org_consumption(uuid,uuid) to authenticated;
+grant execute on function create_workspace(text),create_invitation(uuid,uuid,text),accept_invitation(text),get_org_stock(uuid,uuid),get_member_balances(uuid),record_org_consumption(text,uuid,uuid,integer,timestamptz),add_org_deposit(text,uuid,numeric),admin_add_user_deposit(text,uuid,uuid,numeric),add_member_by_email(uuid,text,uuid),add_org_stock(uuid,uuid,integer,text),add_org_stock(uuid,uuid,integer,text,numeric),upsert_org_beverage(uuid,text,numeric,numeric),update_org_beverage_price(uuid,uuid,numeric),update_org_beverage_purchase_price(uuid,uuid,numeric),deactivate_org_beverage(uuid,uuid),create_org_group(uuid,text),update_member_group(uuid,uuid,uuid),delete_member(uuid,uuid),delete_org_group(uuid,uuid),delete_workspace(uuid),reset_workspace_values(uuid),send_group_chat_message(uuid,uuid,text),send_chat_message(uuid,uuid,uuid,text,text,text,text),give_beer_to_user(text,uuid,uuid,uuid,integer,timestamptz),set_member_groups(uuid,uuid,uuid[]),set_member_admin_role(uuid,uuid,boolean),delete_org_consumption(uuid,uuid) to authenticated;
