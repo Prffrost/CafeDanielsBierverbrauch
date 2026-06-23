@@ -830,6 +830,26 @@ document.querySelector("#workspace-form").addEventListener("submit", async (even
   catch (error) { remoteStatusMessage = remoteErrorMessage(error); render(); showToast(remoteStatusMessage); }
 });
 
+document.querySelector("#reset-values-button")?.addEventListener("click", async () => {
+  if (!currentUser || !isAdmin || !activeOrganizationId) return showToast("Nur für Administratoren");
+  const active = organizations.find((item) => item.organization_id === activeOrganizationId);
+  const ok = confirm(`Alle Werte im Bereich „${active?.organizations?.name || "Aktiver Bereich"}“ zurücksetzen?\n\nVerbrauch, Guthaben, Lagerbewegungen und Chat werden gelöscht. Benutzer, Gruppen, Getränke und Preise bleiben erhalten.`);
+  if (!ok) return;
+  const really = confirm("Bitte nochmal bestätigen: Diese Werte können nicht automatisch wiederhergestellt werden.");
+  if (!really) return;
+  const result = await supabaseClient.rpc("reset_workspace_values", { p_org: activeOrganizationId });
+  if (result.error) return showToast(remoteErrorMessage(result.error));
+  entries = [];
+  adminEntries = [];
+  chatMessages = [];
+  remoteBalance = null;
+  remoteBeerStock = null;
+  remoteStockByBeverage = new Map();
+  persistEntries();
+  await loadRemoteState();
+  showToast("Werte zurückgesetzt");
+});
+
 document.querySelector("#group-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!isAdmin) return showToast("Nur für Administratoren");
@@ -1013,6 +1033,13 @@ document.querySelector("#resend-button").addEventListener("click", async () => {
   document.querySelector("#auth-message").textContent = result.error ? remoteErrorMessage(result.error) : "Neue Bestätigungs-E-Mail wurde versendet.";
 });
 
+function ensureAuthWorkspaceDefault() {
+  const input = document.querySelector("#auth-workspace");
+  if (input && !input.value.trim()) input.value = localStorage.getItem("cafe-daniels-new-workspace") || "Cafe Daniels";
+}
+
+document.querySelector("#auth-display-name").addEventListener("input", ensureAuthWorkspaceDefault);
+
 document.querySelector("#logout-button").addEventListener("click", async () => {
   if (!supabaseClient) return;
   await supabaseClient.auth.signOut();
@@ -1029,6 +1056,7 @@ if (INVITE_TOKEN) {
   document.querySelector("#auth-workspace").closest(".field-group").hidden = true;
 }
 
+ensureAuthWorkspaceDefault();
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js"));
 render();
 initializeRemote();

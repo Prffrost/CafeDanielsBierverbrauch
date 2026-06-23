@@ -694,3 +694,30 @@ begin
   raise exception 'Aktive Bereiche können nicht gelöscht werden';
 end
 $$;
+
+create or replace function public.reset_workspace_values(p_org uuid)
+returns void
+language plpgsql
+security definer
+set search_path=public
+as $$
+begin
+  if not public.is_org_admin(p_org) then
+    raise exception 'Nur für Administratoren';
+  end if;
+
+  delete from public.org_chat_messages
+  where organization_id=p_org;
+
+  delete from public.org_consumptions
+  where organization_id=p_org;
+
+  delete from public.org_deposits
+  where organization_id=p_org;
+
+  delete from public.org_stock_movements
+  where organization_id=p_org;
+end
+$$;
+
+grant execute on function public.reset_workspace_values(uuid) to authenticated;
