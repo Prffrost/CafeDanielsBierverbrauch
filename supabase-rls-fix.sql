@@ -211,7 +211,6 @@ $$;
 
 grant execute on function public.add_org_deposit(text, uuid, numeric) to authenticated;
 grant execute on function public.add_org_stock(uuid, uuid, integer, text) to authenticated;
-grant execute on function public.upsert_org_beverage(uuid, text, numeric) to authenticated;
 grant execute on function public.update_org_beverage_price(uuid, uuid, numeric) to authenticated;
 grant execute on function public.deactivate_org_beverage(uuid, uuid) to authenticated;
 

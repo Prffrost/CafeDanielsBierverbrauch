@@ -3,6 +3,7 @@ const SETTINGS_KEY = "cafe-daniels-settings-v1";
 const DEFAULT_BEVERAGES = ["Bier", "Spezi", "Cola", "Wein"];
 const DEFAULT_PRICES = { Bier: 3.5, Spezi: 3, Cola: 3, Wein: 4.5 };
 const DEFAULT_PURCHASE_PRICES = { Bier: 1 };
+const DEFAULT_WORKSPACE_NAME = "Cafe Daniel - LA -";
 const SUPABASE_CONFIG = window.CAFE_DANIELS_SUPABASE || {};
 const REMOTE_ENABLED = Boolean(SUPABASE_CONFIG.url && SUPABASE_CONFIG.publishableKey && window.supabase);
 const supabaseClient = REMOTE_ENABLED ? window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.publishableKey) : null;
@@ -362,7 +363,7 @@ async function loadOrganizations({ autoCreate = true } = {}) {
     } catch { localStorage.removeItem("cafe-daniels-created-org"); }
   }
   if (!organizations.length && autoCreate) {
-    const workspaceName = localStorage.getItem("cafe-daniels-new-workspace") || `${settings.profileName || "Mein"} Bereich`;
+    const workspaceName = localStorage.getItem("cafe-daniels-new-workspace") || DEFAULT_WORKSPACE_NAME;
     const created = await supabaseClient.rpc("create_workspace", { p_name: workspaceName });
     if (created.error) throw created.error;
     activeOrganizationId = created.data;
@@ -375,7 +376,7 @@ async function loadOrganizations({ autoCreate = true } = {}) {
   if (!organizations.length) {
     activeOrganizationId = "";
     localStorage.removeItem("cafe-daniels-active-org");
-    if (autoCreate) throw new Error("Noch kein Bereich vorhanden. Bitte unter Einstellungen einen Bereich erstellen.");
+    if (autoCreate) throw new Error("Noch kein Lokal vorhanden. Bitte unter Einstellungen ein Lokal erstellen.");
     return;
   }
   if (!organizations.some((item) => item.organization_id === activeOrganizationId)) activeOrganizationId = organizations[0].organization_id;
@@ -408,7 +409,7 @@ function renderStatus() {
   document.querySelector("#settings-stock").textContent = stock;
   document.querySelector("#settings-stock-label").textContent = "Bier";
   document.querySelector("#account-email").textContent = currentUser?.email || "Lokaler Modus";
-  document.querySelector("#account-role").textContent = currentUser ? (remoteStatusMessage || (!organizations.length ? "Noch kein Bereich eingerichtet" : (isAdmin ? "Administrator · synchronisiert" : "Benutzer · synchronisiert"))) : "Keine Serververbindung";
+  document.querySelector("#account-role").textContent = currentUser ? (remoteStatusMessage || (!organizations.length ? "Noch kein Lokal eingerichtet" : (isAdmin ? "Administrator · synchronisiert" : "Benutzer · synchronisiert"))) : "Keine Serververbindung";
   document.querySelector("#sync-dot").classList.toggle("online", Boolean(currentUser && navigator.onLine));
   document.querySelector("#logout-button").hidden = !currentUser;
   document.querySelectorAll("[data-admin-only]").forEach((element) => { element.hidden = REMOTE_ENABLED && !isAdmin; });
@@ -702,7 +703,7 @@ document.querySelector("#deposit-form").addEventListener("submit", async (event)
   const amount = parsePrice(document.querySelector("#deposit-amount").value);
   if (!Number.isFinite(amount) || amount <= 0) return showToast("Bitte gültigen Betrag eingeben");
   if (currentUser) {
-    if (!activeOrganizationId) return showToast("Bitte zuerst einen aktiven Bereich erstellen");
+  if (!activeOrganizationId) return showToast("Bitte zuerst ein aktives Lokal erstellen");
     if (!navigator.onLine) return showToast("Einzahlung benötigt eine Verbindung");
     const result = await supabaseClient.rpc("add_org_deposit", { p_client: crypto.randomUUID(), p_org: activeOrganizationId, p_amount: Math.round(amount * 100) / 100 });
     if (result.error) { remoteStatusMessage = remoteErrorMessage(result.error); renderStatus(); return showToast(remoteStatusMessage); }
@@ -720,7 +721,9 @@ document.querySelector("#stock-form").addEventListener("submit", async (event) =
     if (!isAdmin) return showToast("Nur für Administratoren");
     if (!navigator.onLine) return showToast("Lagerzugang benötigt eine Verbindung");
     const beverageName = document.querySelector("#stock-beverage").value || "Bier";
-    const result = await supabaseClient.rpc("add_org_stock", { p_org: activeOrganizationId, p_beverage: remoteBeverageIds.get(beverageName), p_quantity: amount, p_note: "Lagerzugang" });
+    const beverageId = remoteBeverageIds.get(beverageName);
+    if (!beverageId) return showToast("Getränk erst speichern/SQL-Fix ausführen");
+    const result = await supabaseClient.rpc("add_org_stock", { p_org: activeOrganizationId, p_beverage: beverageId, p_quantity: amount, p_note: "Lagerzugang" });
     if (result.error) return showToast(remoteErrorMessage(result.error));
     event.target.reset(); await loadRemoteState(); return showToast("Globaler Bestand erhöht");
   }
@@ -740,7 +743,10 @@ document.querySelector("#beverage-form").addEventListener("submit", async (event
   if (currentUser) {
     if (!isAdmin) return showToast("Nur für Administratoren");
     const result = await supabaseClient.rpc("upsert_org_beverage", { p_org: activeOrganizationId, p_name: name, p_price: Math.round(price * 100) / 100, p_purchase_price: Math.round(purchasePrice * 100) / 100 });
-    if (result.error) return showToast(remoteErrorMessage(result.error));
+    if (result.error) {
+      if ((result.error.message || "").includes("function") || (result.error.message || "").includes("schema cache")) return showToast("Bitte aktuellen SQL-Fix in Supabase ausführen");
+      return showToast(remoteErrorMessage(result.error));
+    }
     event.target.reset(); await loadRemoteState(); beverageInput.value = name; updateCalculatedPrice(); return showToast("Getränk hinzugefügt");
   }
   settings.beverages.push(name); settings.prices[name] = Math.round(price * 100) / 100; settings.purchasePrices[name] = Math.round(purchasePrice * 100) / 100; persistSettings(); event.target.reset(); render(); beverageInput.value = name; updateCalculatedPrice(); showToast("Getränk hinzugefügt");
@@ -808,16 +814,16 @@ document.querySelector("#workspace-select").addEventListener("change", async (ev
   activeOrganizationId = event.target.value;
   localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
   remoteBeerStock = null; remoteBalance = null;
-  try { await loadRemoteState(); await syncPendingConsumptions(); showToast("Bereich gewechselt"); }
+  try { await loadRemoteState(); await syncPendingConsumptions(); showToast("Lokal gewechselt"); }
   catch (error) { showToast(remoteErrorMessage(error)); }
 });
 
 document.querySelector("#workspace-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!currentUser) return showToast("Bitte zuerst anmelden");
-  if (!navigator.onLine) return showToast("Bereichserstellung benötigt eine Verbindung");
+  if (!navigator.onLine) return showToast("Lokal-Erstellung benötigt eine Verbindung");
   const name = document.querySelector("#workspace-name").value.trim();
-  if (!name) return showToast("Bitte einen Bereichsnamen eingeben");
+  if (!name) return showToast("Bitte einen Lokalnamen eingeben");
   const created = await supabaseClient.rpc("create_workspace", { p_name: name });
   if (created.error) { remoteStatusMessage = remoteErrorMessage(created.error); renderStatus(); return showToast(remoteStatusMessage); }
   activeOrganizationId = created.data;
@@ -826,14 +832,14 @@ document.querySelector("#workspace-form").addEventListener("submit", async (even
   localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
   localStorage.setItem("cafe-daniels-created-org", JSON.stringify({ id: created.data, name, userId: currentUser.id }));
   event.target.reset();
-  try { remoteStatusMessage = ""; await loadRemoteState(); render(); showToast("Bereich erstellt – du bist Administrator"); }
+  try { remoteStatusMessage = ""; await loadRemoteState(); render(); showToast("Lokal erstellt – du bist Administrator"); }
   catch (error) { remoteStatusMessage = remoteErrorMessage(error); render(); showToast(remoteStatusMessage); }
 });
 
 document.querySelector("#reset-values-button")?.addEventListener("click", async () => {
   if (!currentUser || !isAdmin || !activeOrganizationId) return showToast("Nur für Administratoren");
   const active = organizations.find((item) => item.organization_id === activeOrganizationId);
-  const ok = confirm(`Alle Werte im Bereich „${active?.organizations?.name || "Aktiver Bereich"}“ zurücksetzen?\n\nVerbrauch, Guthaben, Lagerbewegungen und Chat werden gelöscht. Benutzer, Gruppen, Getränke und Preise bleiben erhalten.`);
+  const ok = confirm(`Alle Werte im Lokal „${active?.organizations?.name || "Aktives Lokal"}“ zurücksetzen?\n\nVerbrauch, Guthaben, Lagerbewegungen und Chat werden gelöscht. Benutzer, Gruppen, Getränke und Preise bleiben erhalten.`);
   if (!ok) return;
   const really = confirm("Bitte nochmal bestätigen: Diese Werte können nicht automatisch wiederhergestellt werden.");
   if (!really) return;
@@ -870,14 +876,14 @@ document.querySelector("#invite-form").addEventListener("submit", async (event) 
   document.querySelector("#invite-link").value = link;
   const qr = document.querySelector("#invite-qr"); qr.innerHTML = "";
   if (window.QRCode) new window.QRCode(qr, { text: link, width: 180, height: 180 });
-  document.querySelector("#mail-invite").href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Einladung zu Cafe Daniels")}&body=${encodeURIComponent(`Du wurdest eingeladen. Öffne diesen Link:\n\n${link}`)}`;
+  document.querySelector("#mail-invite").href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Einladung zu Cafe Daniel - LA -")}&body=${encodeURIComponent(`Du wurdest eingeladen. Öffne diesen Link:\n\n${link}`)}`;
   showToast("Einladung erstellt");
 });
 
 document.querySelector("#chat-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!currentUser) return showToast("Bitte zuerst anmelden");
-  if (!activeOrganizationId) return showToast("Kein aktiver Bereich");
+  if (!activeOrganizationId) return showToast("Kein aktives Lokal");
   const input = document.querySelector("#chat-message");
   const message = input.value.trim();
   const groupId = activeGroupId();
@@ -945,7 +951,7 @@ document.querySelector("#members-list").addEventListener("click", async (event) 
   const button = event.target.closest("[data-delete-member]");
   if (!button || !isAdmin) return;
   const member = organizationMembers.find((item) => item.user_id === button.dataset.deleteMember);
-  if (!member || !confirm(`${member.profile?.display_name || "Dieses Mitglied"} aus dem Bereich entfernen?`)) return;
+  if (!member || !confirm(`${member.profile?.display_name || "Dieses Mitglied"} aus dem Lokal entfernen?`)) return;
   const result = await supabaseClient.rpc("delete_member", { p_org: activeOrganizationId, p_user: button.dataset.deleteMember });
   if (result.error) return showToast(remoteErrorMessage(result.error));
   await loadRemoteState(); showToast("Mitglied entfernt");
@@ -955,33 +961,10 @@ document.querySelector("#groups-list").addEventListener("click", async (event) =
   const button = event.target.closest("[data-delete-group]");
   if (!button || !isAdmin) return;
   const group = organizationGroups.find((item) => item.id === button.dataset.deleteGroup);
-  if (!group || !confirm(`Gruppe „${group.name}“ löschen? Mitglieder bleiben im Bereich.`)) return;
+  if (!group || !confirm(`Gruppe „${group.name}“ löschen? Mitglieder bleiben im Lokal.`)) return;
   const result = await supabaseClient.rpc("delete_org_group", { p_org: activeOrganizationId, p_group: button.dataset.deleteGroup });
   if (result.error) return showToast(remoteErrorMessage(result.error));
   await loadRemoteState(); showToast("Gruppe gelöscht");
-});
-
-document.querySelector("#delete-workspace-button")?.addEventListener("click", async () => {
-  if (!isAdmin || !activeOrganizationId) return showToast("Nur für Administratoren");
-  const active = organizations.find((item) => item.organization_id === activeOrganizationId);
-  if (!confirm(`Aktiven Bereich „${active?.organizations?.name || "Bereich"}“ wirklich löschen? Alle Daten dieses Bereichs werden entfernt.`)) return;
-  const result = await supabaseClient.rpc("delete_workspace", { p_org: activeOrganizationId });
-  if (result.error) return showToast(remoteErrorMessage(result.error));
-  localStorage.removeItem("cafe-daniels-active-org");
-  activeOrganizationId = "";
-  await loadOrganizations({ autoCreate: false });
-  if (organizations.length) {
-    activeOrganizationId = organizations[0].organization_id;
-    localStorage.setItem("cafe-daniels-active-org", activeOrganizationId);
-    await loadRemoteState();
-  } else {
-    entries = [];
-    adminEntries = [];
-    remoteBalance = null;
-    remoteBeerStock = null;
-    render();
-  }
-  showToast("Bereich gelöscht");
 });
 
 document.querySelector("#stats-user-filter").addEventListener("change", (event) => {
@@ -1016,9 +999,8 @@ document.querySelector("#register-button").addEventListener("click", async () =>
   const email = document.querySelector("#auth-email").value.trim();
   const password = document.querySelector("#auth-password").value;
   const displayName = document.querySelector("#auth-display-name").value.trim() || email.split("@")[0];
-  const workspaceName = document.querySelector("#auth-workspace").value.trim();
+  const workspaceName = localStorage.getItem("cafe-daniels-new-workspace") || DEFAULT_WORKSPACE_NAME;
   if (!email || password.length < 6) return document.querySelector("#auth-message").textContent = "E-Mail und mindestens 6 Zeichen Passwort eingeben.";
-  if (!INVITE_TOKEN && !workspaceName) return document.querySelector("#auth-message").textContent = "Bitte einen Namen für deinen Bereich eingeben.";
   settings.profileName = displayName; persistSettings();
   if (INVITE_TOKEN) localStorage.setItem("cafe-daniels-invite", INVITE_TOKEN);
   else localStorage.setItem("cafe-daniels-new-workspace", workspaceName);
@@ -1033,13 +1015,6 @@ document.querySelector("#resend-button").addEventListener("click", async () => {
   document.querySelector("#auth-message").textContent = result.error ? remoteErrorMessage(result.error) : "Neue Bestätigungs-E-Mail wurde versendet.";
 });
 
-function ensureAuthWorkspaceDefault() {
-  const input = document.querySelector("#auth-workspace");
-  if (input && !input.value.trim()) input.value = localStorage.getItem("cafe-daniels-new-workspace") || "Cafe Daniels";
-}
-
-document.querySelector("#auth-display-name").addEventListener("input", ensureAuthWorkspaceDefault);
-
 document.querySelector("#logout-button").addEventListener("click", async () => {
   if (!supabaseClient) return;
   await supabaseClient.auth.signOut();
@@ -1053,10 +1028,8 @@ window.addEventListener("offline", renderStatus);
 if (INVITE_TOKEN) {
   localStorage.setItem("cafe-daniels-invite", INVITE_TOKEN);
   document.querySelector("#auth-copy").textContent = "Du wurdest eingeladen. Erstelle ein Konto oder melde dich an, um der vorgesehenen Gruppe beizutreten.";
-  document.querySelector("#auth-workspace").closest(".field-group").hidden = true;
 }
 
-ensureAuthWorkspaceDefault();
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js"));
 render();
 initializeRemote();

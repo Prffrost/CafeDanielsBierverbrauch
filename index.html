@@ -6,13 +6,13 @@
   <meta name="theme-color" content="#f7fbff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Daniels Getränke">
-  <meta name="description" content="Getränke, Guthaben und Lager im Cafe Daniels verwalten.">
+  <meta name="apple-mobile-web-app-title" content="Cafe Daniel LA">
+  <meta name="description" content="Getränke, Guthaben und Lager im Cafe Daniel - LA - verwalten.">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/app-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/app-icon.svg">
   <link rel="stylesheet" href="styles.css">
-  <title>Cafe Daniels Getränkeverbrauch</title>
+  <title>Cafe Daniel - LA - Getränkeverbrauch</title>
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
@@ -35,9 +35,9 @@
   <section class="auth-screen" id="auth-screen" hidden>
     <div class="auth-card">
       <div class="brand-mark"><svg class="icon icon-xl"><use href="#icon-beer"/></svg></div>
-      <p class="eyebrow">CAFE DANIELS</p><h1>Anmelden</h1>
+      <p class="eyebrow">CAFE DANIEL - LA -</p><h1>Anmelden</h1>
       <p class="auth-copy" id="auth-copy">Mit deinem Konto werden Verbrauch, Guthaben und Lager sicher synchronisiert.</p>
-      <form id="auth-form"><div class="field-group"><label for="auth-display-name">Name</label><input id="auth-display-name" type="text" autocomplete="name" placeholder="Dein Name"></div><div class="field-group"><label for="auth-workspace">Name des eigenen Bereichs</label><input id="auth-workspace" type="text" value="Cafe Daniels" placeholder="z. B. Cafe Daniels"></div><div class="field-group"><label for="auth-email">E-Mail</label><input id="auth-email" type="email" autocomplete="email" required></div><div class="field-group"><label for="auth-password">Passwort</label><input id="auth-password" type="password" minlength="6" autocomplete="current-password" required></div><button class="primary-button" type="submit">Anmelden</button><button class="secondary-button" id="register-button" type="button">Neues Konto erstellen</button><button class="text-button" id="resend-button" type="button">Bestätigungs-E-Mail erneut senden</button></form>
+      <form id="auth-form"><div class="field-group"><label for="auth-display-name">Name</label><input id="auth-display-name" type="text" autocomplete="name" placeholder="Dein Name"></div><div class="field-group"><label for="auth-email">E-Mail</label><input id="auth-email" type="email" autocomplete="email" required></div><div class="field-group"><label for="auth-password">Passwort</label><input id="auth-password" type="password" minlength="6" autocomplete="current-password" required></div><button class="primary-button" type="submit">Anmelden</button><button class="secondary-button" id="register-button" type="button">Neues Konto erstellen</button><button class="text-button" id="resend-button" type="button">Bestätigungs-E-Mail erneut senden</button></form>
       <p class="form-note" id="auth-message"></p>
     </div>
   </section>
@@ -45,7 +45,7 @@
   <div class="app-shell">
     <header class="hero">
       <div class="brand-mark app-logo"><svg class="icon icon-xl"><use href="#icon-beer"/></svg></div>
-      <div><p class="eyebrow">CAFE DANIELS</p><h1>Getränkeverbrauch</h1><p class="subtitle">Profil: <span id="profile-name-display">nicht eingerichtet</span></p></div>
+      <div><p class="eyebrow">CAFE DANIEL - LA -</p><h1>Getränkeverbrauch</h1><p class="subtitle">Profil: <span id="profile-name-display">nicht eingerichtet</span></p></div>
       <div class="header-avatar"><img id="profile-photo-display" alt="Profilbild" hidden><span id="profile-fallback-icon">?</span></div>
     </header>
 
@@ -119,7 +119,7 @@
       </section>
 
       <section class="tab-panel" data-tab-panel="settings" aria-label="Einstellungen" hidden>
-        <section class="settings-card" id="account-card"><div class="section-heading"><div><p class="section-label">VERBINDUNG</p><h2>Benutzerkonto</h2></div><span class="sync-dot" id="sync-dot"></span></div><p class="account-email" id="account-email">Lokal</p><p class="form-note" id="account-role">Keine Serververbindung</p><div class="field-group workspace-field"><label for="workspace-select">Aktiver Bereich</label><select id="workspace-select"></select></div><form id="workspace-form" class="inline-form"><input id="workspace-name" type="text" maxlength="60" placeholder="Name des neuen Bereichs" required><button class="small-primary" type="submit">Erstellen</button></form><p class="form-note">Aktive Bereiche können nicht gelöscht werden. Wer einen neuen Bereich erstellt, wird dort automatisch Administrator.</p><button class="danger-outline" id="reset-values-button" type="button" data-admin-only>Alle Werte zurücksetzen</button><button class="secondary-button" id="logout-button" type="button">Abmelden</button></section>
+        <section class="settings-card" id="account-card"><div class="section-heading"><div><p class="section-label">VERBINDUNG</p><h2>Benutzerkonto</h2></div><span class="sync-dot" id="sync-dot"></span></div><p class="account-email" id="account-email">Lokal</p><p class="form-note" id="account-role">Keine Serververbindung</p><div class="field-group workspace-field"><label for="workspace-select">Lokal / Standort wechseln</label><select id="workspace-select"></select></div><form id="workspace-form" class="inline-form"><input id="workspace-name" type="text" maxlength="60" placeholder="Neues Lokal / neuer Standort" required><button class="small-primary" type="submit">Erstellen</button></form><p class="form-note">Aktive Lokale können nicht gelöscht werden. Wer ein neues Lokal erstellt, wird dort automatisch Administrator.</p><button class="danger-outline" id="reset-values-button" type="button" data-admin-only>Alle Werte zurücksetzen</button><button class="secondary-button" id="logout-button" type="button">Abmelden</button></section>
 
         <section class="settings-card"><div class="section-heading"><div><p class="section-label">DARSTELLUNG</p><h2>Hell / Dunkel</h2></div><svg class="icon title-icon"><use href="#icon-theme"/></svg></div><div class="segmented-control" id="theme-toggle"><button type="button" data-theme-choice="dark">Dunkel</button><button type="button" data-theme-choice="light">Hell</button></div><p class="form-note">Die Auswahl wird auf diesem Gerät gespeichert.</p></section>
 
