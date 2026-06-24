@@ -1,6 +1,9 @@
 -- Cafe Daniels: Korrektur für die Ersteinrichtung eines Bereichs
 -- Diesen kompletten Inhalt einmal im Supabase SQL Editor ausführen.
 
+alter table public.profiles
+  add column if not exists phone text;
+
 create or replace function public.create_workspace(p_name text)
 returns uuid
 language plpgsql

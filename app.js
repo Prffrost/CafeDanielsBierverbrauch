@@ -64,7 +64,7 @@ function loadEntries() {
 }
 
 function loadSettings() {
-  const fallback = { beverages: [...DEFAULT_BEVERAGES], prices: { ...DEFAULT_PRICES }, purchasePrices: { ...DEFAULT_PURCHASE_PRICES }, deposits: 0, beerStockAdded: 0, profileName: "", profilePhoto: "", remoteInitialized: false, theme: "light" };
+  const fallback = { beverages: [...DEFAULT_BEVERAGES], prices: { ...DEFAULT_PRICES }, purchasePrices: { ...DEFAULT_PURCHASE_PRICES }, deposits: 0, beerStockAdded: 0, profileName: "", profilePhoto: "", profilePhone: "", remoteInitialized: false, theme: "light" };
   try {
     const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
     if (!stored) return fallback;
@@ -80,6 +80,7 @@ function loadSettings() {
       beerStockAdded: Number(stored.beerStockAdded) || 0,
       profileName: typeof stored.profileName === "string" ? stored.profileName : "",
       profilePhoto: typeof stored.profilePhoto === "string" ? stored.profilePhoto : "",
+      profilePhone: typeof stored.profilePhone === "string" ? stored.profilePhone : "",
       remoteInitialized: Boolean(stored.remoteInitialized),
       theme: stored.theme === "dark" ? "dark" : "light"
     };
@@ -195,6 +196,15 @@ function setActiveTab(tabName) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+function openProfileSettings() {
+  activeSettingsSection = "general";
+  localStorage.setItem("cafe-daniels-settings-section", activeSettingsSection);
+  document.querySelector("#profile-popover").hidden = true;
+  setActiveTab("settings");
+  renderSettingsSections();
+  setTimeout(() => document.querySelector("#profile-settings-card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+}
+
 function groupEntriesByDay(sourceEntries = entries) {
   const grouped = new Map();
   for (const entry of sourceEntries) {
@@ -304,9 +314,18 @@ function renderBeverageChoices() {
 
 function renderProfile() {
   const photo = pendingProfilePhoto || settings.profilePhoto;
+  const profileEmail = currentUser?.email || "";
+  const profilePhone = settings.profilePhone || currentProfile?.phone || "";
   document.querySelector("#profile-name-display").textContent = settings.profileName || "nicht eingerichtet";
   if (document.activeElement !== document.querySelector("#profile-name")) document.querySelector("#profile-name").value = settings.profileName || "";
-  for (const [imageId, fallbackId] of [["profile-photo-display", "profile-fallback-icon"], ["settings-profile-photo", "settings-profile-fallback"]]) {
+  const emailInput = document.querySelector("#profile-email");
+  const phoneInput = document.querySelector("#profile-phone");
+  if (emailInput && document.activeElement !== emailInput) emailInput.value = profileEmail;
+  if (phoneInput && document.activeElement !== phoneInput) phoneInput.value = profilePhone;
+  document.querySelector("#popup-profile-name").textContent = settings.profileName || "Nicht eingerichtet";
+  document.querySelector("#popup-profile-email").textContent = profileEmail || "Keine E-Mail";
+  document.querySelector("#popup-profile-phone").textContent = profilePhone || "Keine Telefonnummer";
+  for (const [imageId, fallbackId] of [["profile-photo-display", "profile-fallback-icon"], ["settings-profile-photo", "settings-profile-fallback"], ["popup-profile-photo", "popup-profile-fallback"]]) {
     const image = document.querySelector(`#${imageId}`);
     const fallback = document.querySelector(`#${fallbackId}`);
     image.hidden = !photo;
@@ -351,8 +370,8 @@ async function loadRemoteState() {
   const membership = organizations.find((item) => item.organization_id === activeOrganizationId);
   isAdmin = membership?.role === "admin";
   negativeLimit = Number(membership?.organizations?.max_negative_balance) || 0;
-  let [profileResult, firstBeverageResult, consumptionResult, depositResult, groupResult, memberResult] = await Promise.all([
-    supabaseClient.from("profiles").select("display_name").eq("id", currentUser.id).single(),
+  let [firstProfileResult, firstBeverageResult, consumptionResult, depositResult, groupResult, memberResult] = await Promise.all([
+    supabaseClient.from("profiles").select("display_name,phone").eq("id", currentUser.id).single(),
     supabaseClient.from("org_beverages").select("id,name,price,purchase_price,active").eq("organization_id", activeOrganizationId).eq("active", true).order("name"),
     supabaseClient.from("org_consumptions").select("id,client_id,quantity,unit_price,consumed_at,gift_to_user,org_beverages(id,name)").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id).order("consumed_at", { ascending: false }),
     supabaseClient.from("org_deposits").select("amount,gift_from_user,gift_quantity,note,created_at").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id),
@@ -362,6 +381,9 @@ async function loadRemoteState() {
   const beverageResult = firstBeverageResult.error?.message?.includes("purchase_price")
     ? await supabaseClient.from("org_beverages").select("id,name,price,active").eq("organization_id", activeOrganizationId).eq("active", true).order("name")
     : firstBeverageResult;
+  const profileResult = firstProfileResult.error?.message?.includes("phone")
+    ? await supabaseClient.from("profiles").select("display_name").eq("id", currentUser.id).single()
+    : firstProfileResult;
   if (consumptionResult.error?.message?.includes("gift_to_user")) {
     consumptionResult = await supabaseClient.from("org_consumptions").select("id,client_id,quantity,unit_price,consumed_at,org_beverages(id,name)").eq("organization_id", activeOrganizationId).eq("user_id", currentUser.id).order("consumed_at", { ascending: false });
   }
@@ -377,6 +399,7 @@ async function loadRemoteState() {
 
   currentProfile = profileResult.data;
   if (currentProfile?.display_name) settings.profileName = currentProfile.display_name;
+  settings.profilePhone = currentProfile?.phone || settings.profilePhone || "";
   organizationGroups = groupResult.data;
   organizationMembers = memberResult.data;
   const memberGroupResult = await supabaseClient.from("org_member_groups").select("user_id,group_id").eq("organization_id", activeOrganizationId);
@@ -1046,17 +1069,46 @@ document.querySelector("#profile-photo").addEventListener("change", async (event
   } catch { showToast("Bild konnte nicht verarbeitet werden"); }
 });
 
+document.querySelector("#profile-popup-open").addEventListener("click", () => {
+  renderProfile();
+  document.querySelector("#profile-popover").hidden = false;
+});
+
+document.querySelector("#profile-popup-close").addEventListener("click", () => {
+  document.querySelector("#profile-popover").hidden = true;
+});
+
+document.querySelector("#profile-popover").addEventListener("click", (event) => {
+  if (event.target.id === "profile-popover") document.querySelector("#profile-popover").hidden = true;
+});
+
+document.querySelector("#profile-edit-button").addEventListener("click", openProfileSettings);
+
 document.querySelector("#profile-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const name = document.querySelector("#profile-name").value.trim();
+  const email = document.querySelector("#profile-email").value.trim();
+  const phone = document.querySelector("#profile-phone").value.trim();
   if (!name) return showToast("Bitte Namen eingeben");
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showToast("Bitte gültige E-Mail eingeben");
   settings.profileName = name;
+  settings.profilePhone = phone;
   if (pendingProfilePhoto) settings.profilePhoto = pendingProfilePhoto;
   pendingProfilePhoto = "";
   persistSettings();
   if (currentUser && navigator.onLine) {
-    const result = await supabaseClient.from("profiles").update({ display_name: name }).eq("id", currentUser.id);
+    let result = await supabaseClient.from("profiles").update({ display_name: name, phone }).eq("id", currentUser.id);
+    if (result.error?.message?.includes("phone")) {
+      result = await supabaseClient.from("profiles").update({ display_name: name }).eq("id", currentUser.id);
+      if (!result.error) showToast("Name gespeichert. Für Telefon bitte SQL-Fix ausführen.");
+    }
     if (result.error) return showToast(remoteErrorMessage(result.error));
+    if (email && email !== currentUser.email) {
+      const emailResult = await supabaseClient.auth.updateUser({ email });
+      if (emailResult.error) return showToast(remoteErrorMessage(emailResult.error));
+      showToast("Profil gespeichert. Neue E-Mail ggf. bestätigen.");
+      return render();
+    }
   }
   render(); showToast("Profil gespeichert");
 });
