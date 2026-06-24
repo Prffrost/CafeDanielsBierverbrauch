@@ -205,6 +205,10 @@ function openProfileSettings() {
   setTimeout(() => document.querySelector("#profile-settings-card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
 }
 
+function defaultGroupIdForWorkspace() {
+  return organizationGroups[0]?.id || activeMembership()?.group_id || null;
+}
+
 function groupEntriesByDay(sourceEntries = entries) {
   const grouped = new Map();
   for (const entry of sourceEntries) {
@@ -602,7 +606,7 @@ function renderStatus() {
 }
 
 function renderSettingsSections() {
-  const allowed = new Set(["locations", "members", "beverages", "qr", "general"]);
+  const allowed = new Set(["locations", "members", "account", "beverages", "qr", "general"]);
   if (!allowed.has(activeSettingsSection)) activeSettingsSection = "locations";
   document.querySelectorAll("[data-settings-tab]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.settingsTab === activeSettingsSection);
@@ -614,6 +618,22 @@ function renderSettingsSections() {
 }
 
 function renderOrganizationAdmin() {
+  const visibleMembersForLocation = organizationMembers;
+  document.querySelector("#members-section-title").textContent = isAdmin ? "Mitglieder zuordnen" : "Mitglieder am Standort";
+  document.querySelector("#members-help-text").textContent = isAdmin ? "Hier werden Mitglieder angelegt und dem aktiven Standort zugewiesen. Der Admin-Haken gibt Verwaltungsrechte." : "Du siehst hier die Mitglieder deines Standorts.";
+  document.querySelector("#members-list").innerHTML = visibleMembersForLocation.map((member) => {
+    const isSelf = member.user_id === currentUser?.id;
+    const adminControls = `<div class="member-group-checks"><label class="admin-check"><input type="checkbox" data-member-admin="${member.user_id}" ${member.role === "admin" ? "checked" : ""} ${isSelf ? "disabled" : ""}>Admin</label></div><button type="button" data-delete-member="${member.user_id}" ${isSelf ? "disabled" : ""} aria-label="Mitglied entfernen"><svg class="icon"><use href="#icon-trash"/></svg></button>`;
+    const readOnlyInfo = `<div class="member-group-checks readonly-groups"><span>${member.role === "admin" ? "Admin" : "Mitglied"}</span></div>`;
+    return `<div class="member-row multi-member-row"><span><strong>${escapeHTML(member.profile?.display_name || member.user_id)}</strong><small>${member.role === "admin" ? "Admin" : "Mitglied"} · ${currency(memberBalances.get(member.user_id) || 0)}</small></span>${isAdmin ? adminControls : readOnlyInfo}</div>`;
+  }).join("") || '<p class="days-empty">Keine Mitglieder am Standort.</p>';
+  const accountBalancesNode = document.querySelector("#account-member-balances");
+  if (accountBalancesNode) {
+    accountBalancesNode.innerHTML = organizationMembers.length
+      ? organizationMembers.map((member) => `<div class="account-balance-row"><div><strong>${escapeHTML(member.profile?.display_name || member.user_id)}</strong><span>${member.role === "admin" ? "Admin" : "Mitglied"}</span></div><strong class="${(memberBalances.get(member.user_id) || 0) >= 0 ? "money-positive" : "money-negative"}">${currency(memberBalances.get(member.user_id) || 0)}</strong></div>`).join("")
+      : '<p class="days-empty">Keine Mitglieder vorhanden.</p>';
+  }
+  return;
   document.querySelector("#groups-list").innerHTML = organizationGroups.map((group) => `<div class="settings-row"><span>${escapeHTML(group.name)}</span><button type="button" data-delete-group="${group.id}" aria-label="Gruppe löschen"><svg class="icon"><use href="#icon-trash"/></svg></button></div>`).join("");
   document.querySelector("#invite-group").innerHTML = organizationGroups.map((group) => `<option value="${group.id}">${escapeHTML(group.name)}</option>`).join("");
   document.querySelector("#member-create-group").innerHTML = organizationGroups.map((group) => `<option value="${group.id}">${escapeHTML(group.name)}</option>`).join("");
@@ -1214,7 +1234,7 @@ document.querySelector("#reset-values-button")?.addEventListener("click", async 
   showToast("Werte zurückgesetzt");
 });
 
-document.querySelector("#group-form").addEventListener("submit", async (event) => {
+document.querySelector("#group-form")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!isAdmin) return showToast("Nur für Administratoren");
   const name = document.querySelector("#new-group-name").value.trim();
@@ -1227,8 +1247,8 @@ document.querySelector("#member-create-form").addEventListener("submit", async (
   event.preventDefault();
   if (!isAdmin) return showToast("Nur für Administratoren");
   const email = document.querySelector("#member-create-email").value.trim();
-  const groupId = document.querySelector("#member-create-group").value;
-  if (!email || !groupId) return showToast("E-Mail und Gruppe angeben");
+  const groupId = defaultGroupIdForWorkspace();
+  if (!email || !groupId) return showToast("E-Mail oder Standort fehlt");
   const result = await supabaseClient.rpc("add_member_by_email", { p_org: activeOrganizationId, p_email: email, p_group: groupId });
   if (result.error) return showToast(remoteErrorMessage(result.error));
   event.target.reset();
@@ -1238,8 +1258,9 @@ document.querySelector("#member-create-form").addEventListener("submit", async (
 
 document.querySelector("#invite-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const groupId = document.querySelector("#invite-group").value;
+  const groupId = defaultGroupIdForWorkspace();
   const email = document.querySelector("#invite-email").value.trim();
+  if (!groupId) return showToast("Standort ist noch nicht bereit");
   const result = await supabaseClient.rpc("create_invitation", { p_org: activeOrganizationId, p_group: groupId, p_email: email || null });
   if (result.error) return showToast(remoteErrorMessage(result.error));
   const link = `${new URL("./", window.location.href).href}?invite=${encodeURIComponent(result.data.token)}`;
@@ -1404,7 +1425,7 @@ document.querySelector("#members-list").addEventListener("click", async (event) 
   await loadRemoteState(); showToast("Mitglied entfernt");
 });
 
-document.querySelector("#groups-list").addEventListener("click", async (event) => {
+document.querySelector("#groups-list")?.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-delete-group]");
   if (!button || !isAdmin) return;
   const group = organizationGroups.find((item) => item.id === button.dataset.deleteGroup);

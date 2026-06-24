@@ -204,12 +204,18 @@ form { margin-top:22px; }
 .stock-finance-row > div { min-width:0; }
 .stock-finance-row strong,.stock-finance-row span { display:block; }
 .stock-finance-row span { color:var(--muted); font-size:11px; }
-.stock-finance-row .money-negative { color:var(--danger); }
-.stock-finance-row .money-positive { color:#168a4a; }
-.stock-history-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); }
+.money-negative { color:var(--danger); }
+.money-positive { color:#168a4a; }
+.stock-history-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(112px,auto); align-items:center; gap:10px; padding:12px 0; border-bottom:1px solid var(--line); }
 .stock-history-row strong,.stock-history-row span { display:block; }
 .stock-history-row span { color:var(--muted); font-size:11px; }
 .stock-history-row > div:last-child { text-align:right; }
+.stock-history-row > div:last-child strong { display:inline-flex; min-width:72px; justify-content:center; padding:6px 10px; border-radius:999px; color:#fff; background:var(--blue); font-size:14px; }
+.stock-history-row > div:last-child span { margin-top:4px; white-space:nowrap; }
+.account-balance-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px; padding:12px 0; border-bottom:1px solid var(--line); }
+.account-balance-row strong,.account-balance-row span { display:block; }
+.account-balance-row span { margin-top:3px; color:var(--muted); font-size:11px; }
+.account-balance-row > strong { font-size:17px; text-align:right; }
 .danger-outline { display:flex; width:100%; min-height:45px; align-items:center; justify-content:center; margin-top:12px; border:1px solid color-mix(in srgb,var(--danger) 55%,transparent); border-radius:14px; color:var(--danger); background:transparent; font-weight:800; }
 .segmented-control { display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-top:16px; padding:4px; border:1px solid var(--line); border-radius:15px; background:var(--field); }
 .segmented-control button { min-height:43px; border:0; border-radius:11px; color:var(--muted); background:transparent; font-weight:800; }
@@ -280,7 +286,10 @@ body[data-theme="dark"] .chat-message.is-own { color:#eafff0; background:#1f5c49
   .stock-finance-row { grid-template-columns:1fr; gap:8px; padding:14px 0; }
   .finance-row { grid-template-columns:1fr; }
   .finance-row strong,.finance-row span { grid-row:auto; text-align:left; }
-  .stock-history-row { grid-template-columns:1fr; }
-  .stock-history-row > div:last-child { text-align:left; }
+  .stock-history-row { grid-template-columns:minmax(0,1fr) minmax(96px,auto); align-items:center; }
+  .stock-history-row > div:last-child { text-align:right; }
+  .stock-history-row > div:last-child strong { min-width:64px; }
+  .stock-history-row > div:last-child span { white-space:normal; }
+  .account-balance-row { grid-template-columns:minmax(0,1fr) auto; }
 }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; transition-duration:.01ms!important; } }
